@@ -1,0 +1,252 @@
+name: Test and Deploy
+
+# Runs the Reqnroll/Playwright API suite on every pull request into master.
+# If the suite passes, the Deploy stage enables auto-merge so the PR lands in master once
+# branch protection (reviews + the required "Test" check) is satisfied.
+on:
+  pull_request:
+    branches: [master]
+    types: [opened, synchronize, reopened, ready_for_review]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+# Least privilege by default; jobs that need more ask for it explicitly.
+permissions:
+  contents: read
+
+env:
+  DOTNET_NOLOGO: true
+  DOTNET_CLI_TELEMETRY_OPTOUT: true
+  CONFIGURATION: Release
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Stage 1: Test
+  # ---------------------------------------------------------------------------
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    # Secrets are not passed to pull requests from forks, so skip them rather than run without credentials.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    env:
+      PAYPAL_CLIENT_ID: ${{ secrets.PAYPAL_CLIENT_ID }}
+      PAYPAL_CLIENT_SECRET: ${{ secrets.PAYPAL_CLIENT_SECRET }}
+      PAYPAL_BASE_URL: ${{ vars.PAYPAL_BASE_URL }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 9.0.x
+
+      # Without credentials the scenarios end as Inconclusive, which dotnet test reports as a pass.
+      # Fail here so a misconfigured pipeline can never auto-merge untested code.
+      - name: Verify credentials are configured
+        run: |
+          if [ -z "$PAYPAL_CLIENT_ID" ] || [ -z "$PAYPAL_CLIENT_SECRET" ]; then
+            echo "::error::PAYPAL_CLIENT_ID and PAYPAL_CLIENT_SECRET repository secrets must be set."
+            exit 1
+          fi
+
+      - name: Restore
+        run: dotnet restore
+
+      - name: Build
+        run: dotnet build --no-restore -c "$CONFIGURATION"
+
+      - name: Run tests
+        run: >
+          dotnet test --no-build -c "$CONFIGURATION"
+          --logger "trx;LogFileName=test-results.trx"
+          --logger "console;verbosity=normal"
+          --results-directory TestResults
+
+      - name: Collect Allure results
+        if: always()
+        run: |
+          mkdir -p allure-results-out
+          find . -type d -name allure-results -not -path './allure-results-out/*' \
+            -exec sh -c 'cp -r "$1"/. allure-results-out/' _ {} \;
+
+      - name: Upload Allure results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: allure-results
+          path: allure-results-out
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Upload TRX results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: trx-results
+          path: TestResults
+          if-no-files-found: ignore
+          retention-days: 14
+
+  # ---------------------------------------------------------------------------
+  # Allure report: runs whether the tests passed or failed, so failures can be investigated.
+  # ---------------------------------------------------------------------------
+  report:
+    name: Allure Report
+    needs: test
+    if: always() && (needs.test.result == 'success' || needs.test.result == 'failure')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write # push the generated report to the gh-pages branch
+    # Serialise publishing so parallel runs don't race on the gh-pages branch.
+    concurrency:
+      group: allure-gh-pages
+      cancel-in-progress: false
+    env:
+      REPORT_HISTORY_RUNS: 20
+    steps:
+      - name: Download Allure results
+        uses: actions/download-artifact@v4
+        with:
+          name: allure-results
+          path: allure-results
+
+      - name: Checkout gh-pages branch
+        uses: actions/checkout@v4
+        with:
+          path: gh-pages
+
+      - name: Switch to gh-pages (create it on first run)
+        working-directory: gh-pages
+        run: |
+          if git ls-remote --exit-code --heads origin gh-pages > /dev/null; then
+            git fetch --depth 1 origin gh-pages:gh-pages
+            git switch gh-pages
+          else
+            git switch --orphan gh-pages
+          fi
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Install Allure CLI
+        run: npm install --global allure-commandline@2.30.0
+
+      - name: Add history, executor and environment info
+        env:
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          BRANCH: ${{ github.head_ref || github.ref_name }}
+          COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
+          BASE_URL: ${{ vars.PAYPAL_BASE_URL || 'https://api-m.sandbox.paypal.com' }}
+        run: |
+          # Carry trend history forward from the previous published report.
+          if [ -d gh-pages/latest/history ]; then
+            cp -r gh-pages/latest/history allure-results/history
+          fi
+
+          REPO_NAME="${GITHUB_REPOSITORY#*/}"
+          REPORT_URL="https://${GITHUB_REPOSITORY_OWNER}.github.io/${REPO_NAME}/runs/${GITHUB_RUN_NUMBER}/"
+
+          cat > allure-results/executor.json <<EOF
+          {
+            "name": "GitHub Actions",
+            "type": "github",
+            "buildName": "${GITHUB_WORKFLOW} #${GITHUB_RUN_NUMBER}",
+            "buildOrder": ${GITHUB_RUN_NUMBER},
+            "buildUrl": "${RUN_URL}",
+            "reportUrl": "${REPORT_URL}"
+          }
+          EOF
+
+          # Non-secret context only: never write credentials or tokens here.
+          cat > allure-results/environment.properties <<EOF
+          Branch=${BRANCH}
+          Commit=${COMMIT}
+          API.BaseUrl=${BASE_URL}
+          Runner=${RUNNER_OS}
+          EOF
+
+      - name: Generate Allure report
+        run: allure generate allure-results --clean -o allure-report
+
+      - name: Upload Allure report artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: allure-report
+          path: allure-report
+          retention-days: 30
+
+      - name: Publish report to gh-pages
+        working-directory: gh-pages
+        run: |
+          rm -rf "runs/${GITHUB_RUN_NUMBER}" latest
+          mkdir -p runs
+          cp -r ../allure-report "runs/${GITHUB_RUN_NUMBER}"
+          cp -r ../allure-report latest
+
+          # Keep only the most recent runs so the branch doesn't grow forever.
+          ls -1 runs | sort -n | head -n "-${REPORT_HISTORY_RUNS}" | xargs -r -I{} rm -rf "runs/{}"
+
+          echo '<meta http-equiv="refresh" content="0; url=latest/">' > index.html
+          touch .nojekyll
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "No report changes to publish."
+            exit 0
+          fi
+          git commit -m "Allure report for run #${GITHUB_RUN_NUMBER}"
+          git push origin gh-pages
+
+      - name: Write job summary
+        run: |
+          REPO_NAME="${GITHUB_REPOSITORY#*/}"
+          {
+            echo "### Allure report"
+            echo ""
+            echo "- Test result: **${{ needs.test.result }}**"
+            echo "- Report for this run: https://${GITHUB_REPOSITORY_OWNER}.github.io/${REPO_NAME}/runs/${GITHUB_RUN_NUMBER}/"
+            echo "- Latest report: https://${GITHUB_REPOSITORY_OWNER}.github.io/${REPO_NAME}/latest/"
+            echo "- Offline copy: download the \`allure-report\` artifact from this run."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # ---------------------------------------------------------------------------
+  # Stage 2: Deploy — enable auto-merge into master, only when the Test stage succeeded.
+  # ---------------------------------------------------------------------------
+  deploy:
+    name: Deploy (merge to master)
+    needs: test
+    if: >
+      github.event_name == 'pull_request' &&
+      needs.test.result == 'success' &&
+      !github.event.pull_request.draft
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      # --auto enables GitHub auto-merge: the PR merges once branch protection is satisfied
+      # (required reviews and the required "Test" check). --match-head-commit refuses to enable it
+      # if anything was pushed after the tested commit.
+      - name: Enable auto-merge into master
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          gh pr merge "$PR_NUMBER" \
+            --repo "$GITHUB_REPOSITORY" \
+            --auto \
+            --merge \
+            --match-head-commit "$HEAD_SHA"
