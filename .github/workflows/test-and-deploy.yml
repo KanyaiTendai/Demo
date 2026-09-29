@@ -193,11 +193,19 @@ jobs:
       - name: Generate Allure report
         run: allure generate allure-results --clean -o allure-report
 
-      - name: Upload Allure report artifact
+      # The multi-file report loads its data with fetch(), which browsers block for file:// pages,
+      # so a downloaded copy shows no data. The single-file report embeds everything in one HTML file
+      # and opens directly from disk.
+      - name: Generate single-file Allure report
+        run: |
+          allure generate allure-results --clean --single-file -o allure-report-single
+          mv allure-report-single/index.html allure-report.html
+
+      - name: Upload single-file Allure report
         uses: actions/upload-artifact@v7
         with:
-          name: allure-report
-          path: allure-report
+          path: allure-report.html
+          archive: false
           retention-days: 30
 
       - name: Publish report to gh-pages
@@ -233,7 +241,7 @@ jobs:
             echo "- Test result: **${{ needs.test.result }}**"
             echo "- Report for this run: https://${GITHUB_REPOSITORY_OWNER}.github.io/${REPO_NAME}/runs/${GITHUB_RUN_NUMBER}/"
             echo "- Latest report: https://${GITHUB_REPOSITORY_OWNER}.github.io/${REPO_NAME}/latest/"
-            echo "- Offline copy: download the \`allure-report\` artifact from this run."
+            echo "- Offline copy: download the \`allure-report.html\` artifact from this run and open it in a browser."
           } >> "$GITHUB_STEP_SUMMARY"
 
   # ---------------------------------------------------------------------------
