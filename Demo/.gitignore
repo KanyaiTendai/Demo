@@ -1,0 +1,63 @@
+# Build output
+bin/
+obj/
+[Dd]ebug/
+[Rr]elease/
+x64/
+x86/
+[Ll]og/
+[Ll]ogs/
+
+# NuGet
+*.nupkg
+*.snupkg
+packages/
+project.lock.json
+project.fragment.lock.json
+
+# Rider / JetBrains
+.idea/
+*.sln.iml
+*.DotSettings.user
+
+# Visual Studio / VS Code
+.vs/
+.vscode/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+# Test results
+TestResults/
+[Tt]est[Rr]esult*/
+*.trx
+coverage*.json
+coverage*.xml
+*.coverage
+
+# Reqnroll generated code-behind
+*.feature.cs
+
+# Allure
+allure-results/
+allure-report/
+.allure/
+
+# Playwright
+playwright-report/
+test-results/
+traces/
+
+# Environment / secrets
+.env
+.env.*
+!.env.example
+appsettings.*.local.json
+
+# Claude Code local settings
+.claude/settings.local.json
+
+# OS files
+.DS_Store
+Thumbs.db

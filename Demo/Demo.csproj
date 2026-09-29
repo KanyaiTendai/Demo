@@ -1,0 +1,47 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+    <PropertyGroup>
+        <TargetFramework>net9.0</TargetFramework>
+        <LangVersion>latest</LangVersion>
+        <ImplicitUsings>enable</ImplicitUsings>
+        <Nullable>enable</Nullable>
+        <IsPackable>false</IsPackable>
+    </PropertyGroup>
+
+    <ItemGroup>
+        <PackageReference Include="Allure.Reqnroll" Version="2.15.0" />
+        <PackageReference Include="coverlet.collector" Version="6.0.2" />
+        <PackageReference Include="DotNetEnv" Version="3.2.0" />
+        <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.12.0" />
+        <PackageReference Include="Microsoft.Playwright" Version="1.45.1" />
+        <PackageReference Include="NUnit" Version="4.2.2" />
+        <PackageReference Include="NUnit.Analyzers" Version="4.4.0" />
+        <PackageReference Include="NUnit3TestAdapter" Version="4.6.0" />
+        <PackageReference Include="Reqnroll.NUnit" Version="3.3.4" />
+        <PackageReference Include="System.Text.Json" Version="9.0.20" />
+        <!-- Pinned to override the vulnerable 4.3.0 versions pulled in transitively by
+             DotNetEnv -> Microsoft.Extensions.Configuration 1.1.2 -> NETStandard.Library 1.6.1.
+             These are the highest patched versions ever published for these legacy compat
+             shims (the actual net9.0 runtime already ships fixed implementations). -->
+        <PackageReference Include="System.Net.Http" Version="4.3.4" />
+        <PackageReference Include="System.Text.RegularExpressions" Version="4.3.1" />
+    </ItemGroup>
+
+    <ItemGroup>
+        <Using Include="Microsoft.Playwright" />
+        <Using Include="NUnit.Framework" />
+        <Using Include="System.Text.RegularExpressions" />
+        <Using Include="System.Threading.Tasks" />
+    </ItemGroup>
+
+    <ItemGroup>
+      <Compile Remove="UnitTest1.cs" />
+    </ItemGroup>
+
+    <ItemGroup>
+        <None Update="allureConfig.json">
+            <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+        </None>
+    </ItemGroup>
+
+</Project>
