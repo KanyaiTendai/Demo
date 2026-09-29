@@ -1,11 +1,11 @@
 name: Test and Deploy
 
-# Runs the Reqnroll/Playwright API suite on every pull request into master.
-# If the suite passes, the Deploy stage enables auto-merge so the PR lands in master once
+# Runs the Reqnroll/Playwright API suite on every pull request into main.
+# If the suite passes, the Deploy stage enables auto-merge so the PR lands in main once
 # branch protection (reviews + the required "Test" check) is satisfied.
 on:
   pull_request:
-    branches: [master]
+    branches: [main]
     types: [opened, synchronize, reopened, ready_for_review]
   workflow_dispatch:
 
@@ -245,10 +245,10 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
   # ---------------------------------------------------------------------------
-  # Stage 2: Deploy — enable auto-merge into master, only when the Test stage succeeded.
+  # Stage 2: Deploy — enable auto-merge into main, only when the Test stage succeeded.
   # ---------------------------------------------------------------------------
   deploy:
-    name: Deploy (merge to master)
+    name: Deploy (merge to main)
     needs: test
     if: >
       github.event_name == 'pull_request' &&
@@ -263,7 +263,7 @@ jobs:
       # --auto enables GitHub auto-merge: the PR merges once branch protection is satisfied
       # (required reviews and the required "Test" check). --match-head-commit refuses to enable it
       # if anything was pushed after the tested commit.
-      - name: Enable auto-merge into master
+      - name: Enable auto-merge into main
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
