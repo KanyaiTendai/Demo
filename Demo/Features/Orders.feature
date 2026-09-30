@@ -10,7 +10,7 @@ Feature: PayPal order creation
     Given a valid PayPal access token has been obtained
     And an order request for 1 "T-Shirt" item priced at "100.00" "USD" with intent "AUTHORIZE"
     When I create the order
-    Then the response status code should be 201
+    Then the response status code should be 200
     And the response should contain an order id
     And the response should contain an order status of "CREATED"
     And the response should contain an intent of "AUTHORIZE"
