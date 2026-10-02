@@ -10,14 +10,14 @@ Feature: PayPal order authorization
   Scenario: Fail to authorize an order that has not been approved by the payer
     Given a PayPal order has been created with intent "AUTHORIZE"
     When I authorize the order
-    Then the response status code should be 423
+    Then the response status code should be 422
     And the response should contain an order validation error
     And the response should contain a validation error issue of "ORDER_NOT_APPROVED"
 
   Scenario: Fail to authorize a non-existent order
     Given a non-existent PayPal order id
     When I authorize the order
-    Then the response status code should be 400
+    Then the response status code should be 404
     And the response should contain an order validation error
     And the response should contain a validation error issue of "INVALID_RESOURCE_ID"
 
