@@ -1,12 +1,17 @@
 name: Test and Deploy
 
-# Runs the Reqnroll/Playwright API suite on every pull request into main.
+# Runs the Reqnroll/Playwright API suite and CodeQL on every pull request into main.
 # If the suite passes, the Deploy stage enables auto-merge so the PR lands in main once
 # branch protection (reviews + the required "Test" check) is satisfied.
+# Pushes to main and the weekly schedule run CodeQL only, never the tests.
 on:
   pull_request:
     branches: [main]
     types: [opened, synchronize, reopened, ready_for_review]
+  push:
+    branches: [main]
+  schedule:
+    - cron: '0 6 * * 1' # Mondays 06:00 UTC, to catch newly published CodeQL rules
   workflow_dispatch:
 
 concurrency:
@@ -30,8 +35,11 @@ jobs:
     name: Test
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    # Secrets are not passed to pull requests from forks, so skip them rather than run without credentials.
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    # Tests run for pull requests and manual runs only. Secrets are not passed to pull requests
+    # from forks, so skip those rather than run without credentials.
+    if: >
+      (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) ||
+      github.event_name == 'workflow_dispatch'
     env:
       PAYPAL_CLIENT_ID: ${{ secrets.PAYPAL_CLIENT_ID }}
       PAYPAL_CLIENT_SECRET: ${{ secrets.PAYPAL_CLIENT_SECRET }}
@@ -109,11 +117,64 @@ jobs:
           retention-days: 14
 
   # ---------------------------------------------------------------------------
+  # CodeQL: static analysis of the C# source, in parallel with Test. It compiles the solution
+  # but never runs the tests, so it makes no PayPal calls and needs no secrets.
+  # Requires the repo's CodeQL "default setup" to be off (Settings > Code security), because
+  # GitHub rejects results from a workflow while default setup is enabled.
+  # ---------------------------------------------------------------------------
+  codeql:
+    name: CodeQL
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    permissions:
+      contents: read
+      actions: read
+      security-events: write # upload results to the Security tab
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: 9.0.x
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v4
+        with:
+          languages: csharp
+          # Manual build so CodeQL also sees the code Reqnroll generates from the .feature files.
+          build-mode: manual
+          queries: security-and-quality
+
+      - name: Build
+        run: dotnet build Demo.sln -c "$CONFIGURATION"
+
+      - name: Analyze
+        uses: github/codeql-action/analyze@v4
+        with:
+          category: /language:csharp
+          output: sarif-results
+          upload: always
+
+      # Kept for the Allure summary even if the upload to the Security tab fails.
+      - name: Upload SARIF for the Allure summary
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: codeql-sarif
+          path: sarif-results
+          if-no-files-found: ignore
+          retention-days: 14
+
+  # ---------------------------------------------------------------------------
   # Allure report: runs whether the tests passed or failed, so failures can be investigated.
+  # Includes a one-line CodeQL summary (counts only) alongside the test results.
   # ---------------------------------------------------------------------------
   report:
     name: Allure Report
-    needs: test
+    needs: [test, codeql]
     if: always() && (needs.test.result == 'success' || needs.test.result == 'failure')
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -131,6 +192,33 @@ jobs:
         with:
           name: allure-results
           path: allure-results
+
+      # Missing when the CodeQL job failed early; the summary then shows as "broken".
+      - name: Download CodeQL results
+        continue-on-error: true
+        uses: actions/download-artifact@v8
+        with:
+          name: codeql-sarif
+          path: codeql-sarif
+
+      - name: Checkout pipeline scripts
+        uses: actions/checkout@v7
+        with:
+          path: src
+          sparse-checkout: .github/scripts
+          persist-credentials: false
+
+      - name: Add CodeQL summary to Allure results
+        id: codeql
+        env:
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          ALERTS_QUERY: ${{ github.event_name == 'pull_request' && format('pr:{0}', github.event.pull_request.number) || format('branch:{0}', github.ref_name) }}
+        run: |
+          ALERTS_URL="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/security/code-scanning?query=is:open+${ALERTS_QUERY}"
+          summary=$(python3 src/.github/scripts/codeql_allure_summary.py \
+            codeql-sarif allure-results "$ALERTS_URL" "$RUN_URL")
+          echo "$summary"
+          echo "summary=$summary" >> "$GITHUB_OUTPUT"
 
       - name: Checkout gh-pages branch
         uses: actions/checkout@v7
@@ -208,9 +296,7 @@ jobs:
           archive: false
           retention-days: 30
 
-      # Dependabot runs get a read-only token, so they can't push; their report stays in the artifact.
       - name: Publish report to gh-pages
-        if: github.actor != 'dependabot[bot]'
         working-directory: gh-pages
         run: |
           rm -rf "runs/${GITHUB_RUN_NUMBER}" latest
@@ -236,19 +322,17 @@ jobs:
 
       - name: Write job summary
         env:
-          PUBLISHED: ${{ github.actor != 'dependabot[bot]' }}
+          TEST_RESULT: ${{ needs.test.result }}
+          CODEQL_SUMMARY: ${{ steps.codeql.outputs.summary }}
         run: |
           REPO_NAME="${GITHUB_REPOSITORY#*/}"
           {
             echo "### Allure report"
             echo ""
-            echo "- Test result: **${{ needs.test.result }}**"
-            if [ "$PUBLISHED" = "true" ]; then
-              echo "- Report for this run: https://${GITHUB_REPOSITORY_OWNER}.github.io/${REPO_NAME}/runs/${GITHUB_RUN_NUMBER}/"
-              echo "- Latest report: https://${GITHUB_REPOSITORY_OWNER}.github.io/${REPO_NAME}/latest/"
-            else
-              echo "- Not published to GitHub Pages (Dependabot run)."
-            fi
+            echo "- Test result: **${TEST_RESULT}**"
+            echo "- ${CODEQL_SUMMARY:-CodeQL: summary unavailable}"
+            echo "- Report for this run: https://${GITHUB_REPOSITORY_OWNER}.github.io/${REPO_NAME}/runs/${GITHUB_RUN_NUMBER}/"
+            echo "- Latest report: https://${GITHUB_REPOSITORY_OWNER}.github.io/${REPO_NAME}/latest/"
             echo "- Offline copy: download the \`allure-report.html\` artifact from this run and open it in a browser."
           } >> "$GITHUB_STEP_SUMMARY"
 
@@ -258,8 +342,7 @@ jobs:
   deploy:
     name: Deploy (merge to main)
     needs: test
-    # Dependency updates from Dependabot are tested but merged by hand after review
-    # (their runs also get a read-only token that can't enable auto-merge).
+    # Dependency updates from Dependabot are tested but merged by hand after review.
     if: >
       github.event_name == 'pull_request' &&
       needs.test.result == 'success' &&
