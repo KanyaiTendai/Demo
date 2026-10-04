@@ -50,7 +50,7 @@ jobs:
       - name: Verify credentials are configured
         run: |
           if [ -z "$PAYPAL_CLIENT_ID" ] || [ -z "$PAYPAL_CLIENT_SECRET" ]; then
-            echo "::error::PAYPAL_CLIENT_ID and PAYPAL_CLIENT_SECRET repository secrets must be set."
+            echo "::error::PAYPAL_CLIENT_ID and PAYPAL_CLIENT_SECRET secrets must be set (Dependabot PRs read them from the separate Dependabot secrets)."
             exit 1
           fi
 
@@ -208,7 +208,9 @@ jobs:
           archive: false
           retention-days: 30
 
+      # Dependabot runs get a read-only token, so they can't push; their report stays in the artifact.
       - name: Publish report to gh-pages
+        if: github.actor != 'dependabot[bot]'
         working-directory: gh-pages
         run: |
           rm -rf "runs/${GITHUB_RUN_NUMBER}" latest
@@ -233,14 +235,20 @@ jobs:
           git push origin gh-pages
 
       - name: Write job summary
+        env:
+          PUBLISHED: ${{ github.actor != 'dependabot[bot]' }}
         run: |
           REPO_NAME="${GITHUB_REPOSITORY#*/}"
           {
             echo "### Allure report"
             echo ""
             echo "- Test result: **${{ needs.test.result }}**"
-            echo "- Report for this run: https://${GITHUB_REPOSITORY_OWNER}.github.io/${REPO_NAME}/runs/${GITHUB_RUN_NUMBER}/"
-            echo "- Latest report: https://${GITHUB_REPOSITORY_OWNER}.github.io/${REPO_NAME}/latest/"
+            if [ "$PUBLISHED" = "true" ]; then
+              echo "- Report for this run: https://${GITHUB_REPOSITORY_OWNER}.github.io/${REPO_NAME}/runs/${GITHUB_RUN_NUMBER}/"
+              echo "- Latest report: https://${GITHUB_REPOSITORY_OWNER}.github.io/${REPO_NAME}/latest/"
+            else
+              echo "- Not published to GitHub Pages (Dependabot run)."
+            fi
             echo "- Offline copy: download the \`allure-report.html\` artifact from this run and open it in a browser."
           } >> "$GITHUB_STEP_SUMMARY"
 
@@ -250,10 +258,13 @@ jobs:
   deploy:
     name: Deploy (merge to main)
     needs: test
+    # Dependency updates from Dependabot are tested but merged by hand after review
+    # (their runs also get a read-only token that can't enable auto-merge).
     if: >
       github.event_name == 'pull_request' &&
       needs.test.result == 'success' &&
-      !github.event.pull_request.draft
+      !github.event.pull_request.draft &&
+      github.actor != 'dependabot[bot]'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
