@@ -1,0 +1,27 @@
+version: 2
+updates:
+  # NuGet packages in Demo/Demo.csproj (found through Demo.sln).
+  - package-ecosystem: nuget
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    groups:
+      # One PR for all minor and patch bumps; major versions get their own PR.
+      nuget-minor-and-patch:
+        update-types: [minor, patch]
+    commit-message:
+      prefix: deps
+
+  # Actions used in .github/workflows (checkout, setup-dotnet, codeql-action, ...).
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    groups:
+      github-actions:
+        patterns: ['*']
+    commit-message:
+      prefix: ci
