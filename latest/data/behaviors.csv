@@ -1,5 +1,5 @@
 "BROKEN","EPIC","FAILED","FEATURE","PASSED","SKIPPED","STORY","UNKNOWN"
-"0","","0","PayPal order authorization","3","0","","0"
 "0","","0","PayPal OAuth2 access token generation","2","0","","0"
-"0","","0","CodeQL code scanning","1","0","","0"
+"0","","0","PayPal order authorization","3","0","","0"
 "0","","0","PayPal order creation","3","0","","0"
+"0","","0","CodeQL code scanning","1","0","","0"
