@@ -5,7 +5,12 @@ Only counts go into the result: no rule names, file paths or code snippets, beca
 Allure report is published to a public GitHub Pages site. The details stay in the repo's
 Security tab, behind GitHub's permissions.
 
-Usage: codeql_allure_summary.py <sarif-dir> <allure-results-dir> <alerts-url> <run-url>
+Usage:
+  codeql_allure_summary.py <sarif-dir> <allure-results-dir> <alerts-url> <run-url>
+      Write the Allure result.
+  codeql_allure_summary.py --check <sarif-dir>
+      Print the counts and exit 1 if there is any critical or high security alert
+      (or no results at all), so the pipeline can block the merge.
 """
 import glob
 import html
@@ -131,13 +136,41 @@ def build_result(sarif_files, alerts_url, run_url):
     return result, summary
 
 
+def find_sarif_files(sarif_dir):
+    return sorted(glob.glob(os.path.join(sarif_dir, "**", "*.sarif"), recursive=True))
+
+
+def check(sarif_dir):
+    sarif_files = find_sarif_files(sarif_dir)
+    if not sarif_files:
+        print("::error::No CodeQL results found, so the security check cannot pass.")
+        return 1
+
+    security, _ = count_results(sarif_files)
+    blocking = security["critical"] + security["high"]
+    print(
+        f"Security alerts: {security['critical']} critical, {security['high']} high, "
+        f"{security['medium']} medium, {security['low']} low"
+    )
+    if blocking:
+        print(
+            f"::error::{blocking} critical or high security alert(s). The PR will not auto-merge. "
+            "See the repository's Security tab > Code scanning for details."
+        )
+        return 1
+    return 0
+
+
 def main(argv):
+    if len(argv) == 3 and argv[1] == "--check":
+        return check(argv[2])
+
     if len(argv) != 5:
         print(__doc__, file=sys.stderr)
         return 2
 
     sarif_dir, out_dir, alerts_url, run_url = argv[1:]
-    sarif_files = sorted(glob.glob(os.path.join(sarif_dir, "**", "*.sarif"), recursive=True))
+    sarif_files = find_sarif_files(sarif_dir)
 
     result, summary = build_result(sarif_files, alerts_url, run_url)
 

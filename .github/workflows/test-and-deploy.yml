@@ -1,7 +1,8 @@
 name: Test and Deploy
 
 # Runs the Reqnroll/Playwright API suite and CodeQL on every pull request into main.
-# If the suite passes, the Deploy stage enables auto-merge so the PR lands in main once
+# If the suite passes and CodeQL finds no critical or high security alerts, the Deploy stage
+# enables auto-merge so the PR lands in main once
 # branch protection (reviews + the required "Test" check) is satisfied.
 # Pushes to main and the weekly schedule run CodeQL only, never the tests.
 on:
@@ -174,6 +175,11 @@ jobs:
           path: sarif-results
           if-no-files-found: ignore
           retention-days: 14
+
+      # Severity gate: fails this job on any critical or high security alert, which stops Deploy
+      # from enabling auto-merge. Medium/low alerts and code quality notes don't block.
+      - name: Check security severity
+        run: python3 .github/scripts/codeql_allure_summary.py --check sarif-results
 
   # ---------------------------------------------------------------------------
   # Allure report: runs whether the tests passed or failed, so failures can be investigated.
@@ -352,11 +358,13 @@ jobs:
   # ---------------------------------------------------------------------------
   deploy:
     name: Deploy (merge to main)
-    needs: test
+    # Waits for both the tests and the CodeQL severity gate.
+    needs: [test, codeql]
     # Dependency updates from Dependabot are tested but merged by hand after review.
     if: >
       github.event_name == 'pull_request' &&
       needs.test.result == 'success' &&
+      needs.codeql.result == 'success' &&
       !github.event.pull_request.draft &&
       github.actor != 'dependabot[bot]'
     runs-on: ubuntu-latest
