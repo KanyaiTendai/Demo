@@ -20,13 +20,13 @@ Feature: PayPal order creation
     Given an invalid PayPal access token
     And an order request for 1 "T-Shirt" item priced at "100.00" "USD" with intent "AUTHORIZE"
     When I create the order
-    Then the response status code should be 407
+    Then the response status code should be 401
     And the response should contain an order authentication error
 
   Scenario: Fail to create an order with a missing purchase unit amount
     Given a valid PayPal access token has been obtained
     And an order request for 1 "T-Shirt" item priced at "100.00" "USD" with intent "AUTHORIZE" but no purchase unit amount
     When I create the order
-    Then the response status code should be 409
+    Then the response status code should be 400
     And the response should contain an order validation error
     And the response should contain a validation error issue of "MISSING_REQUIRED_PARAMETER"
