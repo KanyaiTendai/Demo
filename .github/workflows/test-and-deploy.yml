@@ -40,6 +40,9 @@ jobs:
     if: >
       (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) ||
       github.event_name == 'workflow_dispatch'
+    outputs:
+      # True once the suite has started, so the report job can skip runs that failed before any tests ran.
+      tests-ran: ${{ steps.started.outputs.ran }}
     env:
       PAYPAL_CLIENT_ID: ${{ secrets.PAYPAL_CLIENT_ID }}
       PAYPAL_CLIENT_SECRET: ${{ secrets.PAYPAL_CLIENT_SECRET }}
@@ -83,6 +86,10 @@ jobs:
 
       - name: Build
         run: dotnet build --no-restore -c "$CONFIGURATION"
+
+      - name: Mark tests as started
+        id: started
+        run: echo "ran=true" >> "$GITHUB_OUTPUT"
 
       - name: Run tests
         run: >
@@ -175,7 +182,11 @@ jobs:
   report:
     name: Allure Report
     needs: [test, codeql]
-    if: always() && (needs.test.result == 'success' || needs.test.result == 'failure')
+    # Skip when Test failed before the suite started (e.g. missing secrets): there are no results to report.
+    if: >
+      always() &&
+      (needs.test.result == 'success' || needs.test.result == 'failure') &&
+      needs.test.outputs.tests-ran == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
