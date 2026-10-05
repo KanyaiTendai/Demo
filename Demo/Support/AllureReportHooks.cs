@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using System.Diagnostics;
 using Reqnroll;
 
@@ -9,14 +10,14 @@ public sealed class AllureReportHooks
     private const string AllureExecutable = "allure";
     private const int ReportPort = 4567;
 
-    private static readonly string PidFilePath = Path.Combine(Path.GetTempPath(), "demo-allure-open.pid");
+    private static readonly string PidFilePath = Path.Join(Path.GetTempPath(), "demo-allure-open.pid");
 
     [AfterTestRun]
     public static void GenerateAndOpenReport()
     {
         var baseDirectory = AppContext.BaseDirectory;
-        var resultsDirectory = Path.Combine(baseDirectory, "allure-results");
-        var reportDirectory = Path.Combine(baseDirectory, "allure-report");
+        var resultsDirectory = Path.Join(baseDirectory, "allure-results");
+        var reportDirectory = Path.Join(baseDirectory, "allure-report");
 
         // In CI the pipeline builds and publishes the report; a localhost server would be unreachable.
         if (!Directory.Exists(resultsDirectory) || IsRunningInCi())
@@ -37,7 +38,9 @@ public sealed class AllureReportHooks
                 Console.WriteLine($"Allure report available at http://localhost:{ReportPort}");
             }
         }
-        catch (Exception ex)
+        // Allure not installed (Win32Exception), the process exiting early (InvalidOperationException)
+        // or the PID file being unwritable shouldn't fail the test run.
+        catch (Exception ex) when (ex is Win32Exception or InvalidOperationException or IOException or UnauthorizedAccessException)
         {
             Console.WriteLine($"Allure report could not be generated/opened automatically: {ex.Message}");
         }
