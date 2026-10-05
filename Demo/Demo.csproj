@@ -18,7 +18,7 @@
         <PackageReference Include="NUnit.Analyzers" Version="4.4.0" />
         <PackageReference Include="NUnit3TestAdapter" Version="4.6.0" />
         <PackageReference Include="Reqnroll.NUnit" Version="3.3.4" />
-        <PackageReference Include="System.Text.Json" Version="9.0.20" />
+        <PackageReference Include="System.Text.Json" Version="10.0.12" />
         <!-- Pinned to override the vulnerable 4.3.0 versions pulled in transitively by
              DotNetEnv -> Microsoft.Extensions.Configuration 1.1.2 -> NETStandard.Library 1.6.1.
              These are the highest patched versions ever published for these legacy compat
