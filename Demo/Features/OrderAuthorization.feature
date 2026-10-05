@@ -10,7 +10,7 @@ Feature: PayPal order authorization
   Scenario: Fail to authorize an order that has not been approved by the payer
     Given a PayPal order has been created with intent "AUTHORIZE"
     When I authorize the order
-    Then the response status code should be 426
+    Then the response status code should be 422
     And the response should contain an order validation error
     And the response should contain a validation error issue of "ORDER_NOT_APPROVED"
 
@@ -25,5 +25,5 @@ Feature: PayPal order authorization
     Given a PayPal order has been created with intent "AUTHORIZE"
     And an invalid PayPal access token
     When I authorize the order
-    Then the response status code should be 409
+    Then the response status code should be 401
     And the response should contain an order authentication error
