@@ -1,9 +1,13 @@
 #!/usr/bin/env python3
 """Summarise CodeQL SARIF output as one Allure test result.
 
-Only counts go into the result: no rule names, file paths or code snippets, because the
-Allure report is published to a public GitHub Pages site. The details stay in the repo's
-Security tab, behind GitHub's permissions.
+Security alerts are reported as counts only: no rule names, file paths or code snippets,
+because the Allure report is published to a public GitHub Pages site and those details would
+point at exploitable code. They stay in the repo's Security tab, behind GitHub's permissions.
+
+Code quality findings (no security-severity) are broken down by rule and file, so the team can
+see what to fix. They are maintainability issues, not vulnerabilities, and the source is public
+anyway. Code snippets and messages are still left out.
 
 Usage:
   codeql_allure_summary.py <sarif-dir> <allure-results-dir> <alerts-url> <run-url>
@@ -19,9 +23,14 @@ import os
 import sys
 import time
 import uuid
+from collections import defaultdict
 
 SECURITY_LEVELS = ["critical", "high", "medium", "low"]
 QUALITY_LEVELS = ["error", "warning", "note"]
+# Reqnroll generates C# from .feature files; CodeQL maps findings in that code back to the
+# .feature file (through #line directives) or reports them in the .feature.cs file.
+GENERATED_SUFFIXES = (".feature", ".feature.cs")
+MAX_LINES_PER_FILE = 10
 
 
 def security_severity(rule):
@@ -39,9 +48,31 @@ def security_severity(rule):
     return "low"
 
 
+def result_location(result):
+    for location in result.get("locations") or []:
+        physical = location.get("physicalLocation") or {}
+        uri = (physical.get("artifactLocation") or {}).get("uri")
+        if uri:
+            return uri, (physical.get("region") or {}).get("startLine")
+    return "(unknown file)", None
+
+
+def rule_title(rule, rule_id):
+    return (
+        (rule.get("shortDescription") or {}).get("text")
+        or (rule.get("properties") or {}).get("name")
+        or rule_id
+    )
+
+
 def count_results(sarif_files):
+    """Return security counts, quality counts, and quality findings grouped by rule.
+
+    The grouping is {(level, rule_id): {"title": str, "files": {uri: [line, ...]}}}.
+    """
     security = dict.fromkeys(SECURITY_LEVELS, 0)
     quality = dict.fromkeys(QUALITY_LEVELS, 0)
+    quality_rules = {}
 
     for path in sarif_files:
         with open(path, encoding="utf-8") as f:
@@ -64,9 +95,72 @@ def count_results(sarif_files):
                     security[severity] += 1
                     continue
                 level = result.get("level") or (rule.get("defaultConfiguration") or {}).get("level", "warning")
-                quality[level if level in quality else "note"] += 1
+                level = level if level in quality else "note"
+                quality[level] += 1
 
-    return security, quality
+                rule_id = result.get("ruleId") or "(unknown rule)"
+                entry = quality_rules.setdefault(
+                    (level, rule_id), {"title": rule_title(rule, rule_id), "files": defaultdict(list)}
+                )
+                uri, line = result_location(result)
+                entry["files"][uri].append(line)
+
+    return security, quality, quality_rules
+
+
+def is_generated(uri):
+    return uri.endswith(GENERATED_SUFFIXES)
+
+
+def format_lines(lines):
+    known = sorted({line for line in lines if line is not None})
+    if not known:
+        return ""
+    shown = ", ".join(str(line) for line in known[:MAX_LINES_PER_FILE])
+    if len(known) > MAX_LINES_PER_FILE:
+        shown += f", +{len(known) - MAX_LINES_PER_FILE} more"
+    return f" (line {shown})" if len(known) == 1 else f" (lines {shown})"
+
+
+def quality_breakdown_html(quality_rules):
+    """One row per rule, most severe level first, then by number of findings."""
+    if not quality_rules:
+        return "<p>No code quality findings.</p>"
+
+    def sort_key(item):
+        (level, rule_id), entry = item
+        return QUALITY_LEVELS.index(level), -sum(len(v) for v in entry["files"].values()), rule_id
+
+    rows = []
+    generated_total = total = 0
+    for (level, rule_id), entry in sorted(quality_rules.items(), key=sort_key):
+        files = sorted(entry["files"].items(), key=lambda kv: (-len(kv[1]), kv[0]))
+        count = sum(len(lines) for _, lines in files)
+        total += count
+        generated_total += sum(len(lines) for uri, lines in files if is_generated(uri))
+        where = "<br>".join(
+            f"<code>{html.escape(uri)}</code>{' <em>(generated)</em>' if is_generated(uri) else ''}"
+            f": {len(lines)}{html.escape(format_lines(lines))}"
+            for uri, lines in files
+        )
+        rows.append(
+            f"<tr><td>{html.escape(level.capitalize())}</td>"
+            f"<td>{html.escape(entry['title'])}<br><code>{html.escape(rule_id)}</code></td>"
+            f"<td>{count}</td><td>{where}</td></tr>"
+        )
+
+    note = ""
+    if generated_total:
+        note = (
+            f"<p>{generated_total} of {total} finding(s) are in code Reqnroll generates from "
+            "<code>.feature</code> files (marked <em>generated</em>). Fix those by changing the "
+            "feature file or step bindings, or exclude generated code from the CodeQL scan; "
+            "editing the <code>.feature.cs</code> file has no lasting effect.</p>"
+        )
+    return (
+        "<table><tr><th>Level</th><th>Rule</th><th>Count</th><th>Where</th></tr>"
+        f"{''.join(rows)}</table>{note}"
+    )
 
 
 def build_result(sarif_files, alerts_url, run_url):
@@ -100,7 +194,7 @@ def build_result(sarif_files, alerts_url, run_url):
         result["labels"].append({"name": "severity", "value": "normal"})
         return result, "CodeQL: no results available"
 
-    security, quality = count_results(sarif_files)
+    security, quality, quality_rules = count_results(sarif_files)
     blocking = security["critical"] + security["high"]
 
     rows = "".join(
@@ -110,18 +204,20 @@ def build_result(sarif_files, alerts_url, run_url):
         f"<tr><td>{html.escape(level.capitalize())}</td><td>{quality[level]}</td></tr>" for level in QUALITY_LEVELS
     )
     result["descriptionHtml"] = (
-        "<p>Counts only. Rule names, files and code are kept in the repository's Security tab.</p>"
         "<p><strong>Security alerts</strong></p>"
+        "<p>Counts only. Rule names, files and code are kept in the repository's Security tab.</p>"
         f"<table><tr><th>Severity</th><th>Count</th></tr>{rows}</table>"
         "<p><strong>Code quality</strong></p>"
         f"<table><tr><th>Level</th><th>Count</th></tr>{quality_rows}</table>"
+        "<p><strong>Code quality by source</strong></p>"
+        f"{quality_breakdown_html(quality_rules)}"
         "<p>This check fails when there is at least one critical or high security alert.</p>"
     )
 
     summary = (
         f"CodeQL: {security['critical']} critical, {security['high']} high, "
         f"{security['medium']} medium, {security['low']} low security alerts; "
-        f"{sum(quality.values())} code quality notes"
+        f"{quality['error']} error, {quality['warning']} warning, {quality['note']} note code quality findings"
     )
     if blocking:
         result["status"] = "failed"
@@ -146,7 +242,7 @@ def check(sarif_dir):
         print("::error::No CodeQL results found, so the security check cannot pass.")
         return 1
 
-    security, _ = count_results(sarif_files)
+    security, _, _ = count_results(sarif_files)
     blocking = security["critical"] + security["high"]
     print(
         f"Security alerts: {security['critical']} critical, {security['high']} high, "

@@ -183,7 +183,8 @@ jobs:
 
   # ---------------------------------------------------------------------------
   # Allure report: runs whether the tests passed or failed, so failures can be investigated.
-  # Includes a one-line CodeQL summary (counts only) alongside the test results.
+  # Includes a CodeQL summary alongside the test results: security alerts as counts only,
+  # code quality findings broken down by rule and file.
   # ---------------------------------------------------------------------------
   report:
     name: Allure Report
