@@ -10,6 +10,9 @@ see what to fix. They are maintainability issues, not vulnerabilities, and the s
 anyway. Code snippets and messages are still left out.
 
 Usage:
+  codeql_allure_summary.py --filter-generated <sarif-dir>
+      Remove code quality findings in Reqnroll-generated code from the SARIF files, in place,
+      before they are uploaded. Security alerts in generated code are kept.
   codeql_allure_summary.py <sarif-dir> <allure-results-dir> <alerts-url> <run-url>
       Write the Allure result.
   codeql_allure_summary.py --check <sarif-dir>
@@ -30,6 +33,8 @@ QUALITY_LEVELS = ["error", "warning", "note"]
 # Reqnroll generates C# from .feature files; CodeQL maps findings in that code back to the
 # .feature file (through #line directives) or reports them in the .feature.cs file.
 GENERATED_SUFFIXES = (".feature", ".feature.cs")
+# Written to each SARIF run by --filter-generated, so the report can say what was left out.
+EXCLUDED_PROPERTY = "generatedQualityResultsExcluded"
 MAX_LINES_PER_FILE = 10
 
 
@@ -57,6 +62,20 @@ def result_location(result):
     return "(unknown file)", None
 
 
+def rules_by_id(run):
+    tool = run.get("tool", {})
+    rules = {}
+    # CodeQL lists query rules under tool.extensions; other tools use tool.driver.
+    for component in [tool.get("driver", {})] + tool.get("extensions", []):
+        for rule in component.get("rules") or []:
+            rules[rule.get("id")] = rule
+    return rules
+
+
+def is_generated(uri):
+    return uri.endswith(GENERATED_SUFFIXES)
+
+
 def rule_title(rule, rule_id):
     return (
         (rule.get("shortDescription") or {}).get("text")
@@ -66,25 +85,23 @@ def rule_title(rule, rule_id):
 
 
 def count_results(sarif_files):
-    """Return security counts, quality counts, and quality findings grouped by rule.
+    """Return security counts, quality counts, quality findings grouped by rule, and the
+    number of generated-code quality findings that --filter-generated removed.
 
     The grouping is {(level, rule_id): {"title": str, "files": {uri: [line, ...]}}}.
     """
     security = dict.fromkeys(SECURITY_LEVELS, 0)
     quality = dict.fromkeys(QUALITY_LEVELS, 0)
     quality_rules = {}
+    excluded = 0
 
     for path in sarif_files:
         with open(path, encoding="utf-8") as f:
             sarif = json.load(f)
 
         for run in sarif.get("runs", []):
-            tool = run.get("tool", {})
-            rules = {}
-            # CodeQL lists query rules under tool.extensions; other tools use tool.driver.
-            for component in [tool.get("driver", {})] + tool.get("extensions", []):
-                for rule in component.get("rules") or []:
-                    rules[rule.get("id")] = rule
+            rules = rules_by_id(run)
+            excluded += (run.get("properties") or {}).get(EXCLUDED_PROPERTY, 0)
 
             for result in run.get("results", []):
                 if result.get("suppressions"):
@@ -105,11 +122,37 @@ def count_results(sarif_files):
                 uri, line = result_location(result)
                 entry["files"][uri].append(line)
 
-    return security, quality, quality_rules
+    return security, quality, quality_rules, excluded
 
 
-def is_generated(uri):
-    return uri.endswith(GENERATED_SUFFIXES)
+def filter_generated(sarif_dir):
+    """Drop code quality findings in generated code. Security alerts are always kept, so the
+    severity gate still sees anything CodeQL flags in generated code."""
+    sarif_files = find_sarif_files(sarif_dir)
+    removed = 0
+    for path in sarif_files:
+        with open(path, encoding="utf-8") as f:
+            sarif = json.load(f)
+
+        for run in sarif.get("runs", []):
+            rules = rules_by_id(run)
+            kept = []
+            for result in run.get("results", []):
+                rule = rules.get(result.get("ruleId")) or {}
+                if is_generated(result_location(result)[0]) and not security_severity(rule):
+                    continue
+                kept.append(result)
+            run_removed = len(run.get("results", [])) - len(kept)
+            run["results"] = kept
+            properties = run.setdefault("properties", {})
+            properties[EXCLUDED_PROPERTY] = properties.get(EXCLUDED_PROPERTY, 0) + run_removed
+            removed += run_removed
+
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(sarif, f)
+
+    print(f"Removed {removed} code quality finding(s) in generated code from {len(sarif_files)} SARIF file(s).")
+    return 0
 
 
 def format_lines(lines):
@@ -122,25 +165,28 @@ def format_lines(lines):
     return f" (line {shown})" if len(known) == 1 else f" (lines {shown})"
 
 
-def quality_breakdown_html(quality_rules):
+def quality_breakdown_html(quality_rules, excluded):
     """One row per rule, most severe level first, then by number of findings."""
+    note = ""
+    if excluded:
+        note = (
+            f"<p>{excluded} code quality finding(s) in code Reqnroll generates from "
+            "<code>.feature</code> files were excluded: they come from Reqnroll's generator and "
+            "can't be fixed in this project. Security alerts in generated code are still counted.</p>"
+        )
     if not quality_rules:
-        return "<p>No code quality findings.</p>"
+        return f"<p>No code quality findings.</p>{note}"
 
     def sort_key(item):
         (level, rule_id), entry = item
         return QUALITY_LEVELS.index(level), -sum(len(v) for v in entry["files"].values()), rule_id
 
     rows = []
-    generated_total = total = 0
     for (level, rule_id), entry in sorted(quality_rules.items(), key=sort_key):
         files = sorted(entry["files"].items(), key=lambda kv: (-len(kv[1]), kv[0]))
         count = sum(len(lines) for _, lines in files)
-        total += count
-        generated_total += sum(len(lines) for uri, lines in files if is_generated(uri))
         where = "<br>".join(
-            f"<code>{html.escape(uri)}</code>{' <em>(generated)</em>' if is_generated(uri) else ''}"
-            f": {len(lines)}{html.escape(format_lines(lines))}"
+            f"<code>{html.escape(uri)}</code>: {len(lines)}{html.escape(format_lines(lines))}"
             for uri, lines in files
         )
         rows.append(
@@ -149,14 +195,6 @@ def quality_breakdown_html(quality_rules):
             f"<td>{count}</td><td>{where}</td></tr>"
         )
 
-    note = ""
-    if generated_total:
-        note = (
-            f"<p>{generated_total} of {total} finding(s) are in code Reqnroll generates from "
-            "<code>.feature</code> files (marked <em>generated</em>). Fix those by changing the "
-            "feature file or step bindings, or exclude generated code from the CodeQL scan; "
-            "editing the <code>.feature.cs</code> file has no lasting effect.</p>"
-        )
     return (
         "<table><tr><th>Level</th><th>Rule</th><th>Count</th><th>Where</th></tr>"
         f"{''.join(rows)}</table>{note}"
@@ -194,7 +232,7 @@ def build_result(sarif_files, alerts_url, run_url):
         result["labels"].append({"name": "severity", "value": "normal"})
         return result, "CodeQL: no results available"
 
-    security, quality, quality_rules = count_results(sarif_files)
+    security, quality, quality_rules, excluded = count_results(sarif_files)
     blocking = security["critical"] + security["high"]
 
     rows = "".join(
@@ -210,7 +248,7 @@ def build_result(sarif_files, alerts_url, run_url):
         "<p><strong>Code quality</strong></p>"
         f"<table><tr><th>Level</th><th>Count</th></tr>{quality_rows}</table>"
         "<p><strong>Code quality by source</strong></p>"
-        f"{quality_breakdown_html(quality_rules)}"
+        f"{quality_breakdown_html(quality_rules, excluded)}"
         "<p>This check fails when there is at least one critical or high security alert.</p>"
     )
 
@@ -242,7 +280,7 @@ def check(sarif_dir):
         print("::error::No CodeQL results found, so the security check cannot pass.")
         return 1
 
-    security, _, _ = count_results(sarif_files)
+    security, _, _, _ = count_results(sarif_files)
     blocking = security["critical"] + security["high"]
     print(
         f"Security alerts: {security['critical']} critical, {security['high']} high, "
@@ -260,6 +298,8 @@ def check(sarif_dir):
 def main(argv):
     if len(argv) == 3 and argv[1] == "--check":
         return check(argv[2])
+    if len(argv) == 3 and argv[1] == "--filter-generated":
+        return filter_generated(argv[2])
 
     if len(argv) != 5:
         print(__doc__, file=sys.stderr)

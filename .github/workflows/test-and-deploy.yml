@@ -152,19 +152,34 @@ jobs:
         uses: github/codeql-action/init@v4
         with:
           languages: csharp
-          # Manual build so CodeQL also sees the code Reqnroll generates from the .feature files.
+          # Manual build so CodeQL also sees the code Reqnroll generates from the .feature files
+          # (scanned for security alerts; its code quality findings are filtered out below).
           build-mode: manual
           queries: security-and-quality
 
       - name: Build
         run: dotnet build Demo.sln -c "$CONFIGURATION"
 
+      # Uploaded below, after filtering, so the Security tab, the Allure summary and the severity
+      # gate all see the same results.
       - name: Analyze
         uses: github/codeql-action/analyze@v4
         with:
           category: /language:csharp
           output: sarif-results
-          upload: always
+          upload: never
+
+      # Reqnroll's generated .feature.cs code produces code quality findings (e.g. useless upcasts)
+      # that can't be fixed in this project. paths-ignore doesn't apply to compiled languages, so
+      # they are removed from the SARIF instead. Security alerts in generated code are kept.
+      - name: Remove code quality findings in generated code
+        run: python3 .github/scripts/codeql_allure_summary.py --filter-generated sarif-results
+
+      - name: Upload results to the Security tab
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: sarif-results
+          category: /language:csharp
 
       # Kept for the Allure summary even if the upload to the Security tab fails.
       - name: Upload SARIF for the Allure summary
