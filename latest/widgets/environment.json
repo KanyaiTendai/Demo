@@ -1,1 +1,1 @@
-[{"values":["Demo_for_Marian/E2E_setup"],"name":"Branch"},{"values":["3a3f567b2fa4e5265d3e79bd6943b6dc0d79c807"],"name":"Commit"},{"values":["https://api-m.sandbox.paypal.com"],"name":"API.BaseUrl"},{"values":["Linux"],"name":"Runner"}]
+[{"values":["main"],"name":"Branch"},{"values":["0018008da38c17cb46a3554f052a729154a5543e"],"name":"Commit"},{"values":["https://api-m.sandbox.paypal.com"],"name":"API.BaseUrl"},{"values":["Linux"],"name":"Runner"}]
