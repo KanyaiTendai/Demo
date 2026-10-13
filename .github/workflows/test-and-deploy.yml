@@ -275,7 +275,7 @@ jobs:
           java-version: '21'
 
       - name: Install Allure CLI
-        run: npm install --global allure-commandline@2.30.0
+        run: npm install --global allure-commandline@2.46.1
 
       - name: Add history, executor and environment info
         env:
