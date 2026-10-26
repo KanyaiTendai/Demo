@@ -92,9 +92,13 @@ jobs:
         id: started
         run: echo "ran=true" >> "$GITHUB_OUTPUT"
 
+      # Scenarios tagged @known-issue document defects in the API under test (not in this code).
+      # They are also tagged @ignore, so Reqnroll skips them in every run; this filter is a second
+      # safeguard so they can never block a PR.
       - name: Run tests
         run: >
           dotnet test --no-build -c "$CONFIGURATION"
+          --filter "Category!=known-issue"
           --logger "trx;LogFileName=test-results.trx"
           --logger "console;verbosity=normal"
           --results-directory TestResults

@@ -16,6 +16,7 @@ An automated API test suite for the public [PayPal REST API sandbox](https://dev
 | `Authentication.feature` | `POST /v1/oauth2/token` | Valid credentials return a Bearer token (200). Invalid credentials are rejected (401). |
 | `Orders.feature` | `POST /v2/checkout/orders` | Create an order (201). Missing token (401). Missing purchase unit amount (400). |
 | `OrderAuthorization.feature` | `POST /v2/checkout/orders/{id}/authorize` | Order not approved by the payer (422). Order doesn't exist (404). Missing token (401). |
+| `Performance.feature` (`@performance`) | `POST /v1/oauth2/token`, `POST /v2/checkout/orders` | Light, rate-limited load runs that assert on success rate, request rate and response times. Also an idempotency race test (skipped with `@ignore` because of a known PayPal sandbox issue) and checks that over-limit profiles and bursts are rejected. See [PERFORMANCE_TESTING.md](PERFORMANCE_TESTING.md). |
 
 Example scenario:
 
@@ -48,7 +49,8 @@ Demo/
 ├── StepDefinitions/    # Reqnroll step bindings
 ├── Clients/            # API clients for authentication and orders, built on Playwright
 ├── Models/             # Request and response models
-├── Configuration/      # ApiSettings: reads the base URL and credentials from the environment
+├── Configuration/      # ApiSettings (base URL, credentials) and PerformanceSettings (load safety limits)
+├── Performance/        # Load runner, rate pacer, circuit breaker and result statistics
 ├── Support/            # Playwright setup, shared test context, token store, local Allure hook
 └── allureConfig.json
 .github/
