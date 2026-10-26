@@ -1,5 +1,6 @@
 using System.ComponentModel;
 using System.Diagnostics;
+using System.Globalization;
 using Reqnroll;
 
 namespace Demo.Support;
@@ -10,7 +11,12 @@ public sealed class AllureReportHooks
     private const string AllureExecutable = "allure";
     private const int ReportPort = 4567;
 
-    private static readonly string PidFilePath = Path.Join(Path.GetTempPath(), "demo-allure-open.pid");
+    private static readonly TimeSpan GenerateTimeout = TimeSpan.FromMinutes(2);
+
+    // A per-user folder rather than the shared temp folder, so another account can't plant the file.
+    private static readonly string PidFilePath = Path.Join(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData, Environment.SpecialFolderOption.Create),
+        "demo-allure-open.pid");
 
     [AfterTestRun]
     public static void GenerateAndOpenReport()
@@ -29,12 +35,24 @@ public sealed class AllureReportHooks
         {
             StopPreviousServer();
 
-            RunAllure($"generate \"{resultsDirectory}\" --clean -o \"{reportDirectory}\"", waitForExit: true);
-
-            var process = RunAllure($"open -p {ReportPort} \"{reportDirectory}\"", waitForExit: false);
-            if (process is not null)
+            using (var generate = RunAllure($"generate \"{resultsDirectory}\" --clean -o \"{reportDirectory}\""))
             {
-                File.WriteAllText(PidFilePath, process.Id.ToString());
+                if (generate is not null && !generate.WaitForExit(GenerateTimeout))
+                {
+                    generate.Kill(entireProcessTree: true);
+                    Console.WriteLine($"Allure report generation took longer than {GenerateTimeout.TotalMinutes} minutes and was stopped.");
+                    return;
+                }
+            }
+
+            var server = RunAllure($"open -p {ReportPort} \"{reportDirectory}\"");
+            if (server is not null)
+            {
+                // The start time is saved with the id, so a later run only ever stops this exact process,
+                // never an unrelated one that has since been given the same id by the operating system.
+                File.WriteAllText(
+                    PidFilePath,
+                    $"{server.Id}|{server.StartTime.ToUniversalTime().Ticks.ToString(CultureInfo.InvariantCulture)}");
                 Console.WriteLine($"Allure report available at http://localhost:{ReportPort}");
             }
         }
@@ -56,22 +74,31 @@ public sealed class AllureReportHooks
             return;
         }
 
-        if (int.TryParse(File.ReadAllText(PidFilePath), out var pid))
+        var parts = File.ReadAllText(PidFilePath).Split('|');
+        File.Delete(PidFilePath);
+
+        if (parts.Length != 2
+            || !int.TryParse(parts[0], NumberStyles.Integer, CultureInfo.InvariantCulture, out var pid)
+            || !long.TryParse(parts[1], NumberStyles.Integer, CultureInfo.InvariantCulture, out var startTicks))
         {
-            try
-            {
-                Process.GetProcessById(pid).Kill(entireProcessTree: true);
-            }
-            catch (ArgumentException)
-            {
-                // Process already exited.
-            }
+            return;
         }
 
-        File.Delete(PidFilePath);
+        try
+        {
+            using var process = Process.GetProcessById(pid);
+            if (process.StartTime.ToUniversalTime().Ticks == startTicks)
+            {
+                process.Kill(entireProcessTree: true);
+            }
+        }
+        catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or Win32Exception)
+        {
+            // Process already exited, or it belongs to someone else.
+        }
     }
 
-    private static Process? RunAllure(string arguments, bool waitForExit)
+    private static Process? RunAllure(string arguments)
     {
         var process = Process.Start(new ProcessStartInfo(AllureExecutable, arguments)
         {
@@ -81,9 +108,14 @@ public sealed class AllureReportHooks
             CreateNoWindow = true
         });
 
-        if (process is not null && waitForExit)
+        if (process is not null)
         {
-            process.WaitForExit();
+            // Redirected output must be read, or Allure blocks once the pipe buffer fills and the
+            // test run never finishes. Nothing needs it, so it is discarded.
+            process.OutputDataReceived += (_, _) => { };
+            process.ErrorDataReceived += (_, _) => { };
+            process.BeginOutputReadLine();
+            process.BeginErrorReadLine();
         }
 
         return process;

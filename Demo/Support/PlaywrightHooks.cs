@@ -21,8 +21,24 @@ public sealed class PlaywrightHooks
     [BeforeTestRun]
     public static async Task BeforeTestRunAsync()
     {
-        Env.TraversePath().Load();
+        LoadLocalEnvFile();
         _playwright = await Playwright.CreateAsync();
+    }
+
+    /// <summary>
+    /// Loads the developer's local .env file. CI always provides its values through the pipeline,
+    /// so nothing is loaded there: otherwise the upward search could pick up a .env planted in a
+    /// folder above the checkout. NoClobber keeps any variable that is already set, so a .env can
+    /// never override a value the environment provides.
+    /// </summary>
+    private static void LoadLocalEnvFile()
+    {
+        if (string.Equals(Environment.GetEnvironmentVariable("CI"), "true", StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        Env.NoClobber().TraversePath().Load();
     }
 
     [AfterTestRun]

@@ -21,12 +21,10 @@ public sealed class AuthenticationApiClient : IAuthenticationApiClient
 
     public async Task<IAPIResponse> RequestAccessTokenAsync(string clientId, string clientSecret)
     {
+        // Only the grant type: no ignoreCache (which mints a new token on every call) and no extra
+        // client metadata the tests never use.
         var form = _apiRequestContext.CreateFormData();
         form.Set("grant_type", "client_credentials");
-        form.Set("ignoreCache", "true");
-        form.Set("return_authn_schemes", "true");
-        form.Set("return_client_metadata", "true");
-        form.Set("return_unconsented_scopes", "true");
 
         return await _apiRequestContext.PostAsync(TokenEndpoint, new APIRequestContextOptions
         {
@@ -55,9 +53,11 @@ public sealed class AuthenticationApiClient : IAuthenticationApiClient
 
         if (!response.Ok)
         {
-            var errorBody = await response.TextAsync();
+            // Status and PayPal's error code only: this message reaches logs and the public report,
+            // so the raw body is never included.
+            var error = await TryReadErrorCodeAsync(response);
             throw new InvalidOperationException(
-                $"Failed to obtain a PayPal access token. Status: {response.Status}. Body: {errorBody}");
+                $"Failed to obtain a PayPal access token. Status: {response.Status}. Error: {error}");
         }
 
         var accessTokenResponse = await response.JsonAsync<AccessTokenResponse>();
@@ -70,6 +70,19 @@ public sealed class AuthenticationApiClient : IAuthenticationApiClient
         AccessTokenStore.Store(accessTokenResponse.AccessToken, accessTokenResponse.ExpiresIn);
 
         return accessTokenResponse.AccessToken;
+    }
+
+    private static async Task<string> TryReadErrorCodeAsync(IAPIResponse response)
+    {
+        try
+        {
+            var errorResponse = await response.JsonAsync<AccessTokenErrorResponse>();
+            return errorResponse?.Error ?? "(none)";
+        }
+        catch (Exception ex) when (ex is System.Text.Json.JsonException or PlaywrightException)
+        {
+            return "(response was not JSON)";
+        }
     }
 
     private static string BuildBasicAuthHeader(string clientId, string clientSecret)
