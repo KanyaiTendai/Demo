@@ -69,14 +69,15 @@ Demo/
 
 ### 1. Add your credentials
 
-Create a `.env` file in the repository root. It's in `.gitignore`, so it won't be committed.
+Copy the template to `.env` in the repository root and fill in your sandbox credentials. `.env` is in `.gitignore`, so it won't be committed, and `chmod 600` stops other accounts on the machine from reading it.
 
-```env
-PAYPAL_CLIENT_ID=your-sandbox-client-id
-PAYPAL_CLIENT_SECRET=your-sandbox-client-secret
-# Optional; defaults to https://api-m.sandbox.paypal.com
-PAYPAL_BASE_URL=https://api-m.sandbox.paypal.com
+```bash
+cp .env.example .env && chmod 600 .env
 ```
+
+`PAYPAL_BASE_URL` is optional and defaults to `https://api-m.sandbox.paypal.com`. It must be an `https://` URL on `*.sandbox.paypal.com`, or a `localhost` mock. Anything else is refused before any request is sent, so the credentials can't be sent anywhere else by mistake.
+
+The `.env` file is only loaded locally, and it never overrides a variable that is already set. When `CI=true`, it isn't loaded at all.
 
 ### 2. Run the tests
 
@@ -91,7 +92,7 @@ If the Allure CLI is installed, a report opens at `http://localhost:4567` once t
 The workflow in `.github/workflows/test-and-deploy.yml` runs on every pull request into `main`:
 
 ```
-Pull request ─┬─► Test ───┬─► Allure Report ─► GitHub Pages
+Pull request ─┬─► Test ───┬─► Allure Report ─► Publish Report ─► GitHub Pages
               │           │   (runs on pass or fail)
               └─► CodeQL ─┴─► Deploy ─► auto-merge into main
                               (only if both passed)
@@ -99,10 +100,13 @@ Pull request ─┬─► Test ───┬─► Allure Report ─► GitHub Pa
 
 | Job | What it does |
 |---|---|
-| **Test** | Checks that credentials and project files are present, builds, and runs the suite against the PayPal sandbox. Uploads the Allure and TRX results. |
+| **Test** | Checks that credentials and project files are present, builds, and runs the suite against the PayPal sandbox. Uploads the Allure and TRX results. The PayPal secrets are passed only to the steps that need them. Dependabot PRs are built without credentials and fail until a person reviews them and runs the workflow manually on the branch. |
 | **CodeQL** | Scans the C# code, including the code Reqnroll generates. It removes quality findings in generated code that can't be fixed, uploads the results to the Security tab, and **fails on any critical or high security alert**. |
-| **Allure Report** | Adds a CodeQL summary to the results, keeps trend history, and publishes the report to the `gh-pages` branch. It also uploads a single-file HTML copy you can open offline. |
-| **Deploy** | Turns on GitHub auto-merge for the PR. Branch protection still decides when it merges (reviews and the required `Test` check). |
+| **Allure Report** | Adds a CodeQL summary to the results, keeps trend history, and generates the report. It also uploads a single-file HTML copy you can open offline. It installs the Allure CLI, so it has a read-only token. |
+| **Publish Report** | Pushes the generated report to the `gh-pages` branch. It is the only job with write access to the repository contents, and it runs no third-party code. |
+| **Deploy** | Turns on GitHub auto-merge for the PR. Branch protection still decides when it merges (reviews and the required `Test` check). Without branch protection, auto-merge merges immediately, so keep `main` protected. |
+
+Every action is pinned to a full commit SHA, with its version in a comment. Dependabot keeps the pins up to date.
 
 Pushes to `main` and a weekly schedule (Mondays 06:00 UTC) run CodeQL only.
 
@@ -113,10 +117,12 @@ The public report shows **counts only** for security alerts. Full details stay i
 ### Setting it up in your own repository
 
 1. Copy `.github/workflows/`, `.github/scripts/` and `.github/dependabot.yml`.
-2. Add the `PAYPAL_CLIENT_ID` and `PAYPAL_CLIENT_SECRET` secrets under **Settings → Secrets and variables → Actions**. Add them again under **Dependabot**, because Dependabot PRs can't read Actions secrets. `PAYPAL_BASE_URL` can be set as an Actions variable.
+2. Add the `PAYPAL_CLIENT_ID` and `PAYPAL_CLIENT_SECRET` secrets under **Settings → Secrets and variables → Actions**. Don't add them as Dependabot secrets: Dependabot PRs are built without credentials and get their API test run manually after review. `PAYPAL_BASE_URL` can be set as an Actions variable.
 3. Turn off CodeQL **default setup** under **Settings → Code security**. GitHub rejects the workflow's upload while it's on.
 4. Turn on **Allow auto-merge** under **Settings → General**.
-5. Protect `main`: require a pull request, an approval and the `Test` check. Requiring `CodeQL` too is recommended.
-6. After the first report run, set **Pages** to deploy from the `gh-pages` branch.
+5. Protect `main`: require a pull request, an approval and the `Test` check. Requiring `CodeQL` too is recommended. This step is required, not optional, because the Deploy job's auto-merge merges straight away when there is no protection.
+6. Under **Settings → Actions → General**, set **Workflow permissions** to read-only, allow only actions by GitHub and verified creators, and require actions to be pinned to a full-length commit SHA.
+7. Under **Settings → Code security**, turn on secret scanning **push protection**.
+8. After the first report run, set **Pages** to deploy from the `gh-pages` branch.
 
-If you're using a different API, update the secret names, the solution name in the CodeQL build step, and the environment info in the report job.
+If you're using a different API, update the secret names, the solution name in the CodeQL build step, and the environment info in the Allure Report job.

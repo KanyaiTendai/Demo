@@ -55,7 +55,9 @@ public sealed class OrdersApiClient : IOrdersApiClient
             headers["PayPal-Request-Id"] = payPalRequestId;
         }
 
-        return await _apiRequestContext.PostAsync($"{OrdersBasePath}/{orderId}/authorize", new APIRequestContextOptions
+        // Escaped so an order id can never change which endpoint receives the bearer token
+        // (for example "../" or "?" in an id taken from another system's response).
+        return await _apiRequestContext.PostAsync($"{OrdersBasePath}/{Uri.EscapeDataString(orderId)}/authorize", new APIRequestContextOptions
         {
             Data = string.Empty,
             Headers = headers

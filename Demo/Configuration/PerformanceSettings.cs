@@ -18,10 +18,6 @@ public sealed class PerformanceSettings
     private const int DefaultMaxConsecutiveFailures = 3;
     private const int DefaultMaxBurstSize = 3;
 
-    // Load is only ever sent to the PayPal sandbox, or to a local mock standing in for it.
-    private static readonly string[] AllowedHostSuffixes = ["sandbox.paypal.com"];
-    private static readonly string[] AllowedLocalHosts = ["localhost", "127.0.0.1", "::1"];
-
     /// <summary>Most requests a single load run may send.</summary>
     public int MaxTotalRequests { get; }
 
@@ -76,20 +72,7 @@ public sealed class PerformanceSettings
     /// True when the base URL points at the PayPal sandbox or a local mock. Production PayPal
     /// (api-m.paypal.com) and any other host are never allowed as a load target.
     /// </summary>
-    public static bool IsAllowedTarget(string baseUrl)
-    {
-        if (!Uri.TryCreate(baseUrl, UriKind.Absolute, out var uri))
-        {
-            return false;
-        }
-
-        var host = uri.Host.Trim('[', ']');
-
-        return AllowedLocalHosts.Contains(host, StringComparer.OrdinalIgnoreCase)
-            || AllowedHostSuffixes.Any(suffix =>
-                host.Equals(suffix, StringComparison.OrdinalIgnoreCase)
-                || host.EndsWith($".{suffix}", StringComparison.OrdinalIgnoreCase));
-    }
+    public static bool IsAllowedTarget(string baseUrl) => ApiSettings.IsAllowedBaseUrl(baseUrl);
 
     /// <summary>
     /// Returns every way the load profile breaks the safety limits for the given target. An empty
