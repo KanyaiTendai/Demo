@@ -1,0 +1,9 @@
+Burst run: CreateOrder (shared PayPal-Request-Id ecd83899-79de-4389-b242-1365b8dac8bc)
+Requests:      3 released together
+Start spread:  0.0 ms
+Duration:      0.65 s
+
+  #  start (ms)  duration (ms)  status  body
+  1         1.8            641     201  {"id":"17D09206TY6489721","intent":"AUTHORIZE","status":"CREATED","purchase_units":[{"reference_id":"default","amount":{"currency_code":"USD","value":"100.00","breakdown":{"item_total":{"currency_code":"USD","value":"100.00"}}},"payee":{"email_address":"john_merchant@example.com","merchant_id":"C7CY...
+  2         1.8            647     201  {"id":"5MY65584PD288694C","intent":"AUTHORIZE","status":"CREATED","purchase_units":[{"reference_id":"default","amount":{"currency_code":"USD","value":"100.00","breakdown":{"item_total":{"currency_code":"USD","value":"100.00"}}},"payee":{"email_address":"john_merchant@example.com","merchant_id":"C7CY...
+  3         1.8            643     201  {"id":"3PD54013FT886583E","intent":"AUTHORIZE","status":"CREATED","purchase_units":[{"reference_id":"default","amount":{"currency_code":"USD","value":"100.00","breakdown":{"item_total":{"currency_code":"USD","value":"100.00"}}},"payee":{"email_address":"john_merchant@example.com","merchant_id":"C7CY...
