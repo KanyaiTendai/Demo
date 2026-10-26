@@ -24,6 +24,11 @@
              These are the highest patched versions ever published for these legacy compat
              shims (the actual net9.0 runtime already ships fixed implementations). -->
         <PackageReference Include="System.Net.Http" Version="4.3.4" />
+        <!-- Pinned to override the 2.8.1 pulled in transitively by Allure.Net.Commons. 2.8.1's build
+             targets always launch the native osx-x64 injector on macOS, which fails with
+             "Bad CPU type" (AI_FAIL) on Apple Silicon without Rosetta. 2.9.0 runs the injector as
+             a managed in-process MSBuild task, so it works on every OS and CPU architecture. -->
+        <PackageReference Include="AspectInjector" Version="2.9.0" />
         <PackageReference Include="System.Text.RegularExpressions" Version="4.3.1" />
     </ItemGroup>
 
