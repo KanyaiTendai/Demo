@@ -26,7 +26,7 @@ Merge request ─┬─► test ────────────────
 | **secret_detection** | Scans the commits for leaked credentials. It comes from GitLab's `Jobs/Secret-Detection.gitlab-ci.yml` template. |
 | **security-gate** | Reads both scanner reports. It **fails on any critical or high SAST finding, any detected secret, or a missing report**, which blocks the merge. It also writes a counts-only summary for the Allure report. |
 | **allure-report** | Combines the test results and the security summary, adds trend history from the previous report, and generates the report plus a single-file copy you can open offline. It adds an **Allure report** link to the merge request. The Allure CLI is downloaded from Maven Central and its checksum is checked, so no npm install scripts run. |
-| **publish-report** | Deploys the report to GitLab Pages as the latest report. GitLab deploys the files itself, so this job needs no token and runs no third-party code. |
+| **publish-report** | Deploys the report to GitLab Pages with the same layout as the GitHub `gh-pages` branch: `latest/`, `runs/<pipeline number>/` for the last 20 runs, and a root page that redirects to `latest/`. It adds a **View deployment** link to the merge request. GitLab deploys the files itself, so this job needs no token and runs no third-party code. |
 
 Pushes to `main` and the weekly schedule run only the security scans and the gate, never the tests.
 
@@ -44,7 +44,7 @@ Merge requests from forks run in the fork, which has no credentials, so the test
 | CodeQL and the severity gate | Semgrep SAST, Secret Detection and the `security-gate` job |
 | Security tab | Scanner job artifacts, downloadable by the Developer role and above |
 | TRX results | JUnit report shown in the merge request (`JunitXml.TestLogger`) |
-| Report pushed to `gh-pages` with the last 20 runs | Pages shows the latest report. Each run's report is kept as a job artifact for 30 days. |
+| Report pushed to `gh-pages`: `latest/` and `runs/<run number>/` for the last 20 runs | The same layout on Pages, numbered by pipeline. Pages replaces the whole site on each deployment, so earlier runs are carried over in `runs.tar.gz` (see below). |
 | Deploy job runs `gh pr merge --auto` | GitLab's built-in **Pipelines must succeed** and **Set to auto-merge**. No token needed in the pipeline. |
 | Ruleset protecting `main` | Protected branch and the merge checks below |
 | Dependabot | Renovate (`renovate.json5`) |
@@ -103,10 +103,17 @@ Required approvals need Premium. On Free, agree as a team that someone reviews e
 
 ### 6. Turn on Pages
 
-After the first merge request pipeline, the report appears under **Deploy → Pages**. Choose who can see it under **Settings → General → Visibility → Pages**:
+After the first merge request pipeline, the site URL appears under **Deploy → Pages**. The reports are at:
 
-- **Only project members** keeps the report private. The report is then generated without trend history, because the pipeline can't read a private site.
-- **Everyone** gives trend history. The report already shows security findings as counts only, but the test results and attachments become public.
+- `<site>/latest/`: the newest report
+- `<site>/runs/<pipeline number>/`: each of the last 20 runs
+
+GitLab Pages replaces the whole site on every deployment, unlike a `gh-pages` branch, which keeps its files. So each deployment also publishes `runs.tar.gz`, an archive of `runs/`. The next pipeline downloads it, adds its own run, removes the oldest beyond 20 and deploys the result. `REPORT_HISTORY_RUNS` in `.gitlab-ci.yml` sets how many runs are kept.
+
+Choose who can see the site under **Settings → General → Visibility → Pages**:
+
+- **Everyone** keeps the run history and the trend graphs, because the pipeline can read the previous site. The report shows security findings as counts only, but the test results and attachments are public.
+- **Only project members** keeps the reports private, but the pipeline can't read a private site. Each deployment then shows only its own run, with no trend graphs. Each run's single-file report is still linked from its merge request for 30 days.
 
 ### 7. Schedule the weekly security scan
 

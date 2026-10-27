@@ -60,6 +60,7 @@ Demo/
 └── dependabot.yml
 .gitlab-ci.yml                              # The GitLab CI/CD pipeline (see GITLAB_CI.md)
 .gitlab/scripts/security_allure_summary.py  # Adds GitLab SAST/Secret Detection counts to the Allure report, runs the gate
+.gitlab/scripts/publish_pages.py            # Builds the Pages site: latest/ and runs/<n>/ for the last 20 runs
 renovate.json5                              # Renovate config: GitLab's replacement for Dependabot
 ```
 

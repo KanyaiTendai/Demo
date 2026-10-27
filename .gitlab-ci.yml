@@ -205,12 +205,12 @@ allure-report:
     - cp -r allure-results-out/. allure-results/
     - if [ -d security-summary ]; then cp -r security-summary/. allure-results/; fi
 
-    # Trend history from the previously published report. Only works when the Pages site can be
+    # Trend history from the latest published report. Only works when the Pages site can be
     # read without signing in; otherwise the report is generated without trends.
     - |
       mkdir -p allure-results/history
       for f in history.json history-trend.json duration-trend.json categories-trend.json retry-trend.json; do
-        if curl -sfL --max-time 20 "${CI_PAGES_URL}/history/${f}" -o "/tmp/${f}"; then
+        if curl -sfL --max-time 20 "${CI_PAGES_URL}/latest/history/${f}" -o "/tmp/${f}"; then
           case "$(head -c1 "/tmp/${f}")" in
             "["|"{") mv "/tmp/${f}" allure-results/history/ ;;
           esac
@@ -230,7 +230,7 @@ allure-report:
         "buildName": "${CI_PIPELINE_NAME:-Test and Deploy} #${CI_PIPELINE_IID}",
         "buildOrder": ${CI_PIPELINE_IID},
         "buildUrl": "${CI_PIPELINE_URL}",
-        "reportUrl": "${CI_PAGES_URL}"
+        "reportUrl": "${CI_PAGES_URL}/runs/${CI_PIPELINE_IID}/"
       }
       EOF
 
@@ -242,44 +242,50 @@ allure-report:
       Runner=GitLab (${CI_RUNNER_EXECUTABLE_ARCH})
       EOF
 
-    - allure generate allure-results --clean -o public
+    - allure generate allure-results --clean -o allure-report
     # The multi-file report loads its data with fetch(), which browsers block for file:// pages,
     # so a downloaded copy shows no data. The single-file report embeds everything and opens from disk.
     - allure generate allure-results --clean --single-file -o allure-report-single
     - mv allure-report-single/index.html allure-report.html
-    - echo "Latest report (after the publish job runs) at ${CI_PAGES_URL}"
+    - echo "Report for this run (once published) at ${CI_PAGES_URL}/runs/${CI_PIPELINE_IID}/"
   artifacts:
-    # Adds an "Allure report" link to the merge request.
+    # Adds an "Allure report" link to the merge request: the single-file copy to open offline.
     expose_as: Allure report
     expire_in: 30 days
     paths:
       - allure-report.html
-      - public/
+      - allure-report/
 
 # -----------------------------------------------------------------------------
-# Publish: deploys the generated report to GitLab Pages as the latest report. GitLab deploys the
-# files itself, so this job needs no token and runs no third-party code. Each run's own report
-# stays available from its allure-report job artifacts for 30 days.
+# Publish: deploys the report to GitLab Pages with the same layout as the GitHub gh-pages branch:
+# latest/, runs/<pipeline number>/ for the last REPORT_HISTORY_RUNS runs, and a redirect to
+# latest/. Earlier runs are carried over from the live site (see .gitlab/scripts/publish_pages.py),
+# which needs the Pages site to be public. GitLab deploys the files itself, so this job needs no
+# token and runs no third-party code.
 # -----------------------------------------------------------------------------
 publish-report:
   stage: deploy
-  image: alpine:3.22@sha256:2e0b81d60597f449baa56dc25d355367869d2dca4cd57e866f1e2b52af3eb55f
-  timeout: 5m
+  image: python:3.13-slim@sha256:b3575dcf816cdacc5292df77a6e3e59b8941631078373a045efa2ac1e9c5c3b2
+  timeout: 10m
   needs:
     - job: allure-report
       artifacts: true
   rules:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event" && $CI_PROJECT_ID == $CI_MERGE_REQUEST_PROJECT_ID
     - if: $CI_PIPELINE_SOURCE == "web"
-  # A deployment that is under way finishes before the next one starts, so they never overlap.
+  # One publish at a time, so parallel pipelines don't overwrite each other's runs. GitLab
+  # finishes a Pages deployment shortly after the job ends, so two pipelines publishing within
+  # seconds of each other can still drop one run from the history.
   interruptible: false
   resource_group: pages
   allow_failure:
     exit_codes: [3]
+  variables:
+    REPORT_HISTORY_RUNS: "20"
+  # Shows a "View deployment" link to this run's report on the merge request.
+  environment:
+    name: allure-report
+    url: $CI_PAGES_URL/runs/$CI_PIPELINE_IID/
   pages: true
   script:
-    - |
-      if [ ! -f public/index.html ]; then
-        echo "No report to publish."
-        exit 3
-      fi
+    - python3 .gitlab/scripts/publish_pages.py allure-report public "$CI_PAGES_URL" "$CI_PIPELINE_IID" "$REPORT_HISTORY_RUNS"
