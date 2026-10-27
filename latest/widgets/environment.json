@@ -1,1 +1,1 @@
-[{"values":["main"],"name":"Branch"},{"values":["ff4b7a932eafc34b6c39169e0047a115e37684fe"],"name":"Commit"},{"values":["https://api-m.sandbox.paypal.com"],"name":"API.BaseUrl"},{"values":["Linux"],"name":"Runner"}]
+[{"values":["dependabot/nuget/Demo/nuget-minor-and-patch-e1b50fb28c"],"name":"Branch"},{"values":["b5c2e0c2efa3a448fd30bf5bb18d11f279e8ccdb"],"name":"Commit"},{"values":["https://api-m.sandbox.paypal.com"],"name":"API.BaseUrl"},{"values":["Linux"],"name":"Runner"}]
