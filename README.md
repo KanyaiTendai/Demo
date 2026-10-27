@@ -8,6 +8,7 @@ An automated API test suite for the public [PayPal REST API sandbox](https://dev
 - **CodeQL**: static security and code quality analysis, with a gate that blocks the merge on severe alerts.
 - **GitHub Actions**: a pipeline that tests every pull request, publishes the report, and auto-merges when everything passes.
 - **Dependabot**: weekly NuGet and GitHub Actions updates.
+- **GitLab CI/CD**: the same pipeline for GitLab, with Semgrep SAST, Secret Detection, GitLab Pages and Renovate. See [GITLAB_CI.md](GITLAB_CI.md).
 
 ## What the tests cover
 
@@ -57,6 +58,9 @@ Demo/
 ├── workflows/test-and-deploy.yml       # The CI/CD pipeline
 ├── scripts/codeql_allure_summary.py    # Filters CodeQL results, adds them to the Allure report, runs the severity gate
 └── dependabot.yml
+.gitlab-ci.yml                              # The GitLab CI/CD pipeline (see GITLAB_CI.md)
+.gitlab/scripts/security_allure_summary.py  # Adds GitLab SAST/Secret Detection counts to the Allure report, runs the gate
+renovate.json5                              # Renovate config: GitLab's replacement for Dependabot
 ```
 
 ## Running locally
@@ -126,3 +130,7 @@ The public report shows **counts only** for security alerts. Full details stay i
 8. After the first report run, set **Pages** to deploy from the `gh-pages` branch.
 
 If you're using a different API, update the secret names, the solution name in the CodeQL build step, and the environment info in the Allure Report job.
+
+## GitLab CI/CD
+
+`.gitlab-ci.yml` runs the same suite on GitLab.com Free with shared runners. It uses GitLab SAST and Secret Detection instead of CodeQL, GitLab Pages for the report, GitLab's built-in auto-merge, and Renovate instead of Dependabot. [GITLAB_CI.md](GITLAB_CI.md) covers the setup steps and the security differences on the Free tier.

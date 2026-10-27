@@ -1,0 +1,275 @@
+# Test and Deploy: the GitLab CI/CD version of .github/workflows/test-and-deploy.yml, built for
+# GitLab.com Free with shared Docker runners. GITLAB_CI.md covers the project settings it relies on.
+#
+# Runs the Reqnroll/Playwright API suite plus GitLab SAST (Semgrep) and Secret Detection on every
+# merge request into the default branch. The merge request can only be merged once the pipeline
+# passes: enable Settings > Merge requests > "Pipelines must succeed" and use "Set to auto-merge".
+# Pushes to the default branch and scheduled pipelines run the security scans only, never the tests.
+
+workflow:
+  name: Test and Deploy
+  auto_cancel:
+    # A new commit cancels the running pipeline for the same merge request (jobs marked interruptible).
+    on_new_commit: interruptible
+  rules:
+    # Merge request pipelines for MRs into the default branch.
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_TARGET_BRANCH_NAME == $CI_DEFAULT_BRANCH
+    # A branch with an open MR already gets an MR pipeline, so don't run a duplicate branch pipeline.
+    - if: $CI_COMMIT_BRANCH && $CI_OPEN_MERGE_REQUESTS
+      when: never
+    - if: $CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+    # Weekly security scan (Build > Pipeline schedules), to catch newly published rules.
+    - if: $CI_PIPELINE_SOURCE == "schedule"
+    # Build > Pipelines > Run pipeline: the equivalent of GitHub's workflow_dispatch.
+    - if: $CI_PIPELINE_SOURCE == "web"
+
+include:
+  # GitLab-maintained scanners, free on every tier. They replace CodeQL, whose licence doesn't
+  # cover private code outside GitHub. GitLab updates these templates and their analyzer images
+  # (pinned to a major version) itself, so they can't be pinned by digest like the jobs below.
+  - template: Jobs/SAST.gitlab-ci.yml
+  - template: Jobs/Secret-Detection.gitlab-ci.yml
+
+stages:
+  - test
+  - report
+  - deploy
+
+variables:
+  DOTNET_NOLOGO: "true"
+  DOTNET_CLI_TELEMETRY_OPTOUT: "true"
+  CONFIGURATION: Release
+  # Run the security scanners in merge request pipelines (not only branch pipelines).
+  AST_ENABLE_MR_PIPELINES: "true"
+
+default:
+  interruptible: true
+  retry:
+    max: 1
+    # Retry only for runner problems, never for test failures: a retry would repeat the PayPal calls.
+    when: [runner_system_failure, scheduler_failure]
+
+# Images are pinned by digest so a re-pushed tag can't change what runs; Renovate keeps them current.
+# No NuGet cache: caches are shared between merge request branches, so one branch could plant
+# tampered packages that another branch's pipeline would then run.
+
+# -----------------------------------------------------------------------------
+# Stage 1: Test
+# -----------------------------------------------------------------------------
+test:
+  stage: test
+  image: mcr.microsoft.com/dotnet/sdk:9.0@sha256:d7cfd59385751fc87897a138ba173fb1bbc2bf946ea78aecc91a119993676997
+  timeout: 20m
+  rules:
+    # Merge requests from this project, and manual runs. A merge request from a fork runs in the
+    # fork, which has no credentials, so it is skipped rather than run without them. A maintainer
+    # can still run it in this project from the merge request's Pipelines tab after reviewing it.
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event" && $CI_PROJECT_ID == $CI_MERGE_REQUEST_PROJECT_ID
+    - if: $CI_PIPELINE_SOURCE == "web"
+  # On Premium or Ultimate, set the PayPal variables' environment scope to paypal-sandbox and only
+  # this job receives them. GitLab Free has no environment scopes, so every job in the pipeline gets
+  # project variables; the build steps below still run without them.
+  environment:
+    name: paypal-sandbox
+    action: access
+  script:
+    # Without credentials the scenarios end as Inconclusive, which dotnet test reports as a pass.
+    # Fail here so a misconfigured pipeline can never let untested code be merged.
+    - |
+      if [ -z "${PAYPAL_CLIENT_ID:-}" ] || [ -z "${PAYPAL_CLIENT_SECRET:-}" ]; then
+        echo "ERROR: PAYPAL_CLIENT_ID and PAYPAL_CLIENT_SECRET must be set in Settings > CI/CD > Variables."
+        exit 1
+      fi
+
+    # A folder that had its own .git when it was committed is pushed as a pointer with no files,
+    # so the projects the solution references are missing from the checkout.
+    - |
+      missing=0
+      for sln in *.sln; do
+        [ -e "$sln" ] || continue
+        for proj in $(grep -oE '"[^"]+\.csproj"' "$sln" | tr -d '"' | tr '\\' '/'); do
+          if [ ! -f "$proj" ]; then
+            echo "ERROR: $sln references $proj, but it is not in the repository. If its folder was committed as a nested git repo, remove that folder's .git, then re-add and push its files."
+            missing=1
+          fi
+        done
+      done
+      exit $missing
+
+    # Restore and build run with the PayPal credentials removed from their environment: NuGet
+    # packages can run their own MSBuild code during these steps. This matches the step-scoped
+    # secrets in the GitHub workflow.
+    - env -u PAYPAL_CLIENT_ID -u PAYPAL_CLIENT_SECRET dotnet restore
+    - env -u PAYPAL_CLIENT_ID -u PAYPAL_CLIENT_SECRET dotnet build --no-restore -c "$CONFIGURATION"
+
+    # Scenarios tagged @known-issue document defects in the API under test (not in this code).
+    # They are also tagged @ignore, so Reqnroll skips them in every run; this filter is a second
+    # safeguard so they can never block a merge request.
+    - >
+      dotnet test --no-build -c "$CONFIGURATION"
+      --filter "Category!=known-issue"
+      --logger "junit;LogFilePath=$CI_PROJECT_DIR/TestResults/junit.xml;FailureBodyFormat=Verbose"
+      --logger "console;verbosity=normal"
+      --results-directory TestResults
+  after_script:
+    - |
+      mkdir -p allure-results-out
+      find . -type d -name allure-results -not -path './allure-results-out/*' \
+        -exec sh -c 'cp -r "$1"/. allure-results-out/' _ {} \;
+  artifacts:
+    when: always
+    # Results can include request and response attachments, so only project developers can download them.
+    access: developer
+    expire_in: 14 days
+    paths:
+      - allure-results-out/
+      - TestResults/
+    reports:
+      # Shows passed and failed scenarios in the merge request's test summary widget.
+      junit: TestResults/junit.xml
+
+# -----------------------------------------------------------------------------
+# Security gate: fails the pipeline on any critical or high SAST finding or any detected secret,
+# which blocks the merge while "Pipelines must succeed" is on. GitLab Free has no security
+# dashboard or approval policies, so the gate is done here. Medium and low findings don't block.
+# -----------------------------------------------------------------------------
+security-gate:
+  stage: test
+  image: python:3.13-slim@sha256:b3575dcf816cdacc5292df77a6e3e59b8941631078373a045efa2ac1e9c5c3b2
+  timeout: 5m
+  needs:
+    # Optional so the pipeline is still created if a scanner's rules skip it; the gate then
+    # fails because the report is missing.
+    - job: semgrep-sast
+      artifacts: true
+      optional: true
+    - job: secret_detection
+      artifacts: true
+      optional: true
+  script:
+    # The summary is written first, so the Allure report shows it even when the check fails.
+    - python3 .gitlab/scripts/security_allure_summary.py . security-summary "$CI_PIPELINE_URL"
+    - python3 .gitlab/scripts/security_allure_summary.py --check .
+  artifacts:
+    when: always
+    expire_in: 14 days
+    paths:
+      - security-summary/
+
+# -----------------------------------------------------------------------------
+# Allure report: runs whether the tests passed or failed, so failures can be investigated.
+# Includes the security summary as counts only. This job downloads and runs a third-party tool
+# (the Allure CLI); the separate publish job only deploys the generated files.
+# -----------------------------------------------------------------------------
+allure-report:
+  stage: report
+  image: eclipse-temurin:21-jre@sha256:ff92a063dac03a29fca3987bcfc66aa5f17769542df802bbf7d2ebaba4df8ebe
+  timeout: 10m
+  needs:
+    - job: test
+      artifacts: true
+    - job: security-gate
+      artifacts: true
+      optional: true
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event" && $CI_PROJECT_ID == $CI_MERGE_REQUEST_PROJECT_ID
+      when: always
+    - if: $CI_PIPELINE_SOURCE == "web"
+      when: always
+  # Exit code 3 means there were no results to report (the test job failed before the suite
+  # started, for example because of missing credentials). That shows as a warning, not a failure.
+  allow_failure:
+    exit_codes: [3]
+  variables:
+    # Downloaded from Maven Central instead of npm, so no package install scripts run.
+    # Update both values together; Renovate doesn't track them.
+    ALLURE_VERSION: "2.46.1"
+    ALLURE_SHA256: "37428164f310c8d137cfdd2c3a25d049b233261ddab13e1bd4dfd7627b5cbf8d"
+  script:
+    - |
+      if ! ls allure-results-out/*-result.json > /dev/null 2>&1; then
+        echo "No Allure results to report: the test job failed before the suite started."
+        exit 3
+      fi
+    - mkdir -p allure-results
+    - cp -r allure-results-out/. allure-results/
+    - if [ -d security-summary ]; then cp -r security-summary/. allure-results/; fi
+
+    # Trend history from the previously published report. Only works when the Pages site can be
+    # read without signing in; otherwise the report is generated without trends.
+    - |
+      mkdir -p allure-results/history
+      for f in history.json history-trend.json duration-trend.json categories-trend.json retry-trend.json; do
+        if curl -sfL --max-time 20 "${CI_PAGES_URL}/history/${f}" -o "/tmp/${f}"; then
+          case "$(head -c1 "/tmp/${f}")" in
+            "["|"{") mv "/tmp/${f}" allure-results/history/ ;;
+          esac
+        fi
+      done
+
+    - curl -sfL --retry 3 -o allure.tgz "https://repo.maven.apache.org/maven2/io/qameta/allure/allure-commandline/${ALLURE_VERSION}/allure-commandline-${ALLURE_VERSION}.tgz"
+    - echo "${ALLURE_SHA256}  allure.tgz" | sha256sum -c -
+    - tar -xzf allure.tgz -C /opt
+    - export PATH="/opt/allure-${ALLURE_VERSION}/bin:$PATH"
+
+    - |
+      cat > allure-results/executor.json <<EOF
+      {
+        "name": "GitLab CI",
+        "type": "gitlab",
+        "buildName": "${CI_PIPELINE_NAME:-Test and Deploy} #${CI_PIPELINE_IID}",
+        "buildOrder": ${CI_PIPELINE_IID},
+        "buildUrl": "${CI_PIPELINE_URL}",
+        "reportUrl": "${CI_PAGES_URL}"
+      }
+      EOF
+
+      # Non-secret context only: never write credentials or tokens here.
+      cat > allure-results/environment.properties <<EOF
+      Branch=${CI_MERGE_REQUEST_SOURCE_BRANCH_NAME:-$CI_COMMIT_REF_NAME}
+      Commit=${CI_COMMIT_SHA}
+      API.BaseUrl=${PAYPAL_BASE_URL:-https://api-m.sandbox.paypal.com}
+      Runner=GitLab (${CI_RUNNER_EXECUTABLE_ARCH})
+      EOF
+
+    - allure generate allure-results --clean -o public
+    # The multi-file report loads its data with fetch(), which browsers block for file:// pages,
+    # so a downloaded copy shows no data. The single-file report embeds everything and opens from disk.
+    - allure generate allure-results --clean --single-file -o allure-report-single
+    - mv allure-report-single/index.html allure-report.html
+    - echo "Latest report (after the publish job runs) at ${CI_PAGES_URL}"
+  artifacts:
+    # Adds an "Allure report" link to the merge request.
+    expose_as: Allure report
+    expire_in: 30 days
+    paths:
+      - allure-report.html
+      - public/
+
+# -----------------------------------------------------------------------------
+# Publish: deploys the generated report to GitLab Pages as the latest report. GitLab deploys the
+# files itself, so this job needs no token and runs no third-party code. Each run's own report
+# stays available from its allure-report job artifacts for 30 days.
+# -----------------------------------------------------------------------------
+publish-report:
+  stage: deploy
+  image: alpine:3.22@sha256:2e0b81d60597f449baa56dc25d355367869d2dca4cd57e866f1e2b52af3eb55f
+  timeout: 5m
+  needs:
+    - job: allure-report
+      artifacts: true
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event" && $CI_PROJECT_ID == $CI_MERGE_REQUEST_PROJECT_ID
+    - if: $CI_PIPELINE_SOURCE == "web"
+  # A deployment that is under way finishes before the next one starts, so they never overlap.
+  interruptible: false
+  resource_group: pages
+  allow_failure:
+    exit_codes: [3]
+  pages: true
+  script:
+    - |
+      if [ ! -f public/index.html ]; then
+        echo "No report to publish."
+        exit 3
+      fi

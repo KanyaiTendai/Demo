@@ -1,0 +1,41 @@
+// Renovate: GitLab's replacement for Dependabot (.github/dependabot.yml). It opens merge requests
+// for NuGet packages and the CI images in .gitlab-ci.yml. GITLAB_CI.md explains how to run it.
+{
+  $schema: 'https://docs.renovatebot.com/renovate-schema.json',
+  extends: [
+    'config:recommended',
+    // Keep the digest pins in .gitlab-ci.yml up to date, so a re-pushed tag can't change what runs.
+    'docker:pinDigests',
+  ],
+  // GitHub Actions stay with Dependabot; only update what GitLab runs.
+  enabledManagers: ['nuget', 'gitlabci'],
+  schedule: ['before 9am on monday'],
+  timezone: 'UTC',
+  prConcurrentLimit: 5,
+  // Wait a few days after a release before proposing it: most hijacked package versions are
+  // found and removed within that time.
+  minimumReleaseAge: '3 days',
+  // Never merge on its own: dependency updates are tested by the pipeline, then reviewed and
+  // merged by a person.
+  automerge: false,
+  labels: ['dependencies'],
+  packageRules: [
+    {
+      // One merge request for all minor and patch NuGet bumps; major versions get their own.
+      matchManagers: ['nuget'],
+      matchUpdateTypes: ['minor', 'patch'],
+      groupName: 'nuget minor and patch',
+      commitMessagePrefix: 'deps:',
+    },
+    {
+      matchManagers: ['nuget'],
+      matchUpdateTypes: ['major'],
+      commitMessagePrefix: 'deps:',
+    },
+    {
+      matchManagers: ['gitlabci'],
+      groupName: 'gitlab ci images',
+      commitMessagePrefix: 'ci:',
+    },
+  ],
+}
