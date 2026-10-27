@@ -1,1 +1,1 @@
-[{"values":["Fix/dependabot-tests"],"name":"Branch"},{"values":["b01307c2c78d31978c86bbdc862c17a3e8a82705"],"name":"Commit"},{"values":["https://api-m.sandbox.paypal.com"],"name":"API.BaseUrl"},{"values":["Linux"],"name":"Runner"}]
+[{"values":["Feature/gitlab-ci"],"name":"Branch"},{"values":["713fb6178c7b46cbcdc66bc1cb78a12630b35672"],"name":"Commit"},{"values":["https://api-m.sandbox.paypal.com"],"name":"API.BaseUrl"},{"values":["Linux"],"name":"Runner"}]
