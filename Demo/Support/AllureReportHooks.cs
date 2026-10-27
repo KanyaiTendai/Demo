@@ -8,7 +8,6 @@ namespace Demo.Support;
 [Binding]
 public sealed class AllureReportHooks
 {
-    private const string AllureExecutable = "allure";
     private const int ReportPort = 4567;
 
     private static readonly TimeSpan GenerateTimeout = TimeSpan.FromMinutes(2);
@@ -35,9 +34,9 @@ public sealed class AllureReportHooks
         {
             StopPreviousServer();
 
-            using (var generate = RunAllure($"generate \"{resultsDirectory}\" --clean -o \"{reportDirectory}\""))
+            using (var generate = RunAllure("generate", resultsDirectory, "--clean", "-o", reportDirectory))
             {
-                if (generate is not null && !generate.WaitForExit(GenerateTimeout))
+                if (!generate.WaitForExit(GenerateTimeout))
                 {
                     generate.Kill(entireProcessTree: true);
                     Console.WriteLine($"Allure report generation took longer than {GenerateTimeout.TotalMinutes} minutes and was stopped.");
@@ -45,16 +44,14 @@ public sealed class AllureReportHooks
                 }
             }
 
-            var server = RunAllure($"open -p {ReportPort} \"{reportDirectory}\"");
-            if (server is not null)
-            {
-                // The start time is saved with the id, so a later run only ever stops this exact process,
-                // never an unrelated one that has since been given the same id by the operating system.
-                File.WriteAllText(
-                    PidFilePath,
-                    $"{server.Id}|{server.StartTime.ToUniversalTime().Ticks.ToString(CultureInfo.InvariantCulture)}");
-                Console.WriteLine($"Allure report available at http://localhost:{ReportPort}");
-            }
+            var server = RunAllure("open", "-p", ReportPort.ToString(CultureInfo.InvariantCulture), reportDirectory);
+
+            // The start time is saved with the id, so a later run only ever stops this exact process,
+            // never an unrelated one that has since been given the same id by the operating system.
+            File.WriteAllText(
+                PidFilePath,
+                $"{server.Id}|{server.StartTime.ToUniversalTime().Ticks.ToString(CultureInfo.InvariantCulture)}");
+            Console.WriteLine($"Allure report available at http://localhost:{ReportPort}");
         }
         // Allure not installed (Win32Exception), the process exiting early (InvalidOperationException)
         // or the PID file being unwritable shouldn't fail the test run.
@@ -98,25 +95,43 @@ public sealed class AllureReportHooks
         }
     }
 
-    private static Process? RunAllure(string arguments)
+    private static Process RunAllure(params string[] arguments)
     {
-        var process = Process.Start(new ProcessStartInfo(AllureExecutable, arguments)
+        var process = new Process
         {
-            UseShellExecute = false,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            CreateNoWindow = true
-        });
+            StartInfo = new ProcessStartInfo
+            {
+                FileName = "allure",
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                CreateNoWindow = true
+            }
+        };
 
-        if (process is not null)
+        // Each argument is passed on its own rather than joined into one command line, so a path
+        // containing quotes or spaces can never be split into extra arguments for Allure.
+        foreach (var argument in arguments)
         {
-            // Redirected output must be read, or Allure blocks once the pipe buffer fills and the
-            // test run never finishes. Nothing needs it, so it is discarded.
-            process.OutputDataReceived += (_, _) => { };
-            process.ErrorDataReceived += (_, _) => { };
-            process.BeginOutputReadLine();
-            process.BeginErrorReadLine();
+            process.StartInfo.ArgumentList.Add(argument);
         }
+
+        try
+        {
+            process.Start();
+        }
+        catch
+        {
+            process.Dispose();
+            throw;
+        }
+
+        // Redirected output must be read, or Allure blocks once the pipe buffer fills and the
+        // test run never finishes. Nothing needs it, so it is discarded.
+        process.OutputDataReceived += (_, _) => { };
+        process.ErrorDataReceived += (_, _) => { };
+        process.BeginOutputReadLine();
+        process.BeginErrorReadLine();
 
         return process;
     }
