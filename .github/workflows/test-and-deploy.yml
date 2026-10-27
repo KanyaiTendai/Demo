@@ -49,10 +49,6 @@ jobs:
     # passed only to the steps that need them.
     env:
       PAYPAL_BASE_URL: ${{ vars.PAYPAL_BASE_URL }}
-      # Dependabot PRs are built without credentials. A person reviews the dependency change, then
-      # runs this workflow manually on the branch (Actions > Test and Deploy > Run workflow), which
-      # runs the API tests with credentials and reports the Test check on the same commit.
-      IS_DEPENDABOT: ${{ github.event_name == 'pull_request' && github.event.pull_request.user.login == 'dependabot[bot]' }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -67,13 +63,12 @@ jobs:
       # Without credentials the scenarios end as Inconclusive, which dotnet test reports as a pass.
       # Fail here so a misconfigured pipeline can never auto-merge untested code.
       - name: Verify credentials are configured
-        if: env.IS_DEPENDABOT != 'true'
         env:
           PAYPAL_CLIENT_ID: ${{ secrets.PAYPAL_CLIENT_ID }}
           PAYPAL_CLIENT_SECRET: ${{ secrets.PAYPAL_CLIENT_SECRET }}
         run: |
           if [ -z "$PAYPAL_CLIENT_ID" ] || [ -z "$PAYPAL_CLIENT_SECRET" ]; then
-            echo "::error::PAYPAL_CLIENT_ID and PAYPAL_CLIENT_SECRET secrets must be set."
+            echo "::error::PAYPAL_CLIENT_ID and PAYPAL_CLIENT_SECRET secrets must be set (Dependabot PRs read them from the separate Dependabot secrets)."
             exit 1
           fi
 
@@ -98,13 +93,6 @@ jobs:
 
       - name: Build
         run: dotnet build --no-restore -c "$CONFIGURATION"
-
-      # Fail closed: a dependency update never runs with credentials until a person has reviewed it.
-      - name: Dependabot PRs need a review before the API tests run
-        if: env.IS_DEPENDABOT == 'true'
-        run: |
-          echo "::error::Dependabot PR built successfully. Review the dependency change, then run this workflow manually on this branch (Actions > Test and Deploy > Run workflow) to run the API tests with credentials."
-          exit 1
 
       - name: Mark tests as started
         id: started
