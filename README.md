@@ -100,7 +100,7 @@ Pull request ─┬─► Test ───┬─► Allure Report ─► Publish R
 
 | Job | What it does |
 |---|---|
-| **Test** | Checks that credentials and project files are present, builds, and runs the suite against the PayPal sandbox. Uploads the Allure and TRX results. The PayPal secrets are passed only to the steps that need them. Dependabot PRs are built without credentials and fail until a person reviews them and runs the workflow manually on the branch. |
+| **Test** | Checks that credentials and project files are present, builds, and runs the suite against the PayPal sandbox. Uploads the Allure and TRX results. The PayPal secrets are passed only to the steps that need them. Dependabot PRs run the full suite too, using the Dependabot copies of the secrets, but are never auto-merged. |
 | **CodeQL** | Scans the C# code, including the code Reqnroll generates. It removes quality findings in generated code that can't be fixed, uploads the results to the Security tab, and **fails on any critical or high security alert**. |
 | **Allure Report** | Adds a CodeQL summary to the results, keeps trend history, and generates the report. It also uploads a single-file HTML copy you can open offline. It installs the Allure CLI, so it has a read-only token. |
 | **Publish Report** | Pushes the generated report to the `gh-pages` branch. It is the only job with write access to the repository contents, and it runs no third-party code. |
@@ -117,7 +117,7 @@ The public report shows **counts only** for security alerts. Full details stay i
 ### Setting it up in your own repository
 
 1. Copy `.github/workflows/`, `.github/scripts/` and `.github/dependabot.yml`.
-2. Add the `PAYPAL_CLIENT_ID` and `PAYPAL_CLIENT_SECRET` secrets under **Settings → Secrets and variables → Actions**. Don't add them as Dependabot secrets: Dependabot PRs are built without credentials and get their API test run manually after review. `PAYPAL_BASE_URL` can be set as an Actions variable.
+2. Add the `PAYPAL_CLIENT_ID` and `PAYPAL_CLIENT_SECRET` secrets under **Settings → Secrets and variables → Actions**. Add them again under **Dependabot**, because Dependabot PRs can't read Actions secrets. Ideally use a separate sandbox app for the Dependabot copies, so they can be revoked without affecting the main pipeline. `PAYPAL_BASE_URL` can be set as an Actions variable.
 3. Turn off CodeQL **default setup** under **Settings → Code security**. GitHub rejects the workflow's upload while it's on.
 4. Turn on **Allow auto-merge** under **Settings → General**.
 5. Protect `main`: require a pull request, an approval and the `Test` check. Requiring `CodeQL` too is recommended. This step is required, not optional, because the Deploy job's auto-merge merges straight away when there is no protection.
