@@ -83,6 +83,8 @@ test:
 
     # A folder that had its own .git when it was committed is pushed as a pointer with no files,
     # so the projects the solution references are missing from the checkout.
+    # GitLab runs all script lines as one shell script, so this only exits when something is
+    # missing: "exit 0" here would end the job as passed without running the tests.
     - |
       missing=0
       for sln in *.sln; do
@@ -94,7 +96,7 @@ test:
           fi
         done
       done
-      exit $missing
+      if [ "$missing" -ne 0 ]; then exit 1; fi
 
     # Restore and build run with the PayPal credentials removed from their environment: NuGet
     # packages can run their own MSBuild code during these steps. This matches the step-scoped
@@ -111,6 +113,14 @@ test:
       --logger "junit;LogFilePath=$CI_PROJECT_DIR/TestResults/junit.xml;FailureBodyFormat=Verbose"
       --logger "console;verbosity=normal"
       --results-directory TestResults
+
+    # Safety net: the job only passes if tests actually ran, so a script mistake or an empty
+    # filter can never produce a green pipeline that tested nothing.
+    - |
+      if ! grep -q '<testcase' TestResults/junit.xml 2>/dev/null; then
+        echo "ERROR: no tests ran, so this job can't pass."
+        exit 1
+      fi
   after_script:
     - |
       mkdir -p allure-results-out
