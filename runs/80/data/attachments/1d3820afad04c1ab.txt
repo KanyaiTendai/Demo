@@ -1,0 +1,13 @@
+Performance run: AccessToken
+Profile:       3 requests, 1 concurrent users, max 0.5 req/s
+Outcome:       completed
+Duration:      4.54 s
+Requests sent: 3 (3 succeeded, 0 rate limited)
+Error rate:    0.0 %
+Observed rate: 0.50 req/s
+Response time: min 118 ms, avg 366 ms, p50 439 ms, p90 540 ms, p95 540 ms, max 540 ms
+
+  #  start (s)  duration (ms)  status
+  1       0.00            439  200
+  2       2.00            118  200
+  3       4.00            540  200

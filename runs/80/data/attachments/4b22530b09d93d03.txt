@@ -1,0 +1,15 @@
+Performance run: CreateOrder
+Profile:       5 requests, 1 concurrent users, max 0.5 req/s
+Outcome:       completed
+Duration:      9.65 s
+Requests sent: 5 (5 succeeded, 0 rate limited)
+Error rate:    0.0 %
+Observed rate: 0.50 req/s
+Response time: min 742 ms, avg 964 ms, p50 837 ms, p90 1647 ms, p95 1647 ms, max 1647 ms
+
+  #  start (s)  duration (ms)  status
+  1       0.00            851  201
+  2       2.00            746  201
+  3       4.00            837  201
+  4       6.00            742  201
+  5       8.00           1647  201
