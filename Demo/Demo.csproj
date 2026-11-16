@@ -14,7 +14,7 @@
 
     <ItemGroup>
         <PackageReference Include="Allure.Reqnroll" Version="3.0.0-preview.1" />
-        <PackageReference Include="coverlet.collector" Version="6.0.4" />
+        <PackageReference Include="coverlet.collector" Version="10.1.1" />
         <PackageReference Include="DotNetEnv" Version="3.2.0" />
         <!-- JUnit XML output for GitLab's merge request test report (dotnet test has no built-in JUnit logger). -->
         <PackageReference Include="JunitXml.TestLogger" Version="8.1.0" />
