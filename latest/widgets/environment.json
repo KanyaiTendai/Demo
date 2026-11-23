@@ -1,1 +1,1 @@
-[{"values":["dependabot/nuget/Demo/coverlet.collector-10.1.1"],"name":"Branch"},{"values":["e7b9d6a8bd7c733c8c00dde0f15dac94ef5572f7"],"name":"Commit"},{"values":["https://api-m.sandbox.paypal.com"],"name":"API.BaseUrl"},{"values":["Linux"],"name":"Runner"}]
+[{"values":["dependabot/nuget/Demo/nuget-minor-and-patch-13cc48e178"],"name":"Branch"},{"values":["35a53fd6bb222a95a22a17d5f40659035ea99dbd"],"name":"Commit"},{"values":["https://api-m.sandbox.paypal.com"],"name":"API.BaseUrl"},{"values":["Linux"],"name":"Runner"}]
